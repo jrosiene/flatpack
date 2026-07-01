@@ -83,7 +83,11 @@ class Panel:
 
 
 def load_seam_spec(path: str | Path) -> SeamSpec:
-    data = yaml.safe_load(Path(path).read_text())
+    return spec_from_dict(yaml.safe_load(Path(path).read_text()))
+
+
+def spec_from_dict(data: dict) -> SeamSpec:
+    """Build a SeamSpec from parsed YAML / JSON data (see module docstring)."""
     seams = [list(map(int, seam["path"])) for seam in data.get("seams", [])]
     panels = [
         PanelSpec(
@@ -104,16 +108,14 @@ def load_seam_spec(path: str | Path) -> SeamSpec:
     )
 
 
-def split_mesh(mesh: trimesh.Trimesh, spec: SeamSpec) -> list[Panel]:
-    """Cut the mesh along the seam paths and return one Panel per component.
+def face_labels(mesh: trimesh.Trimesh, seams: list[list[int]]) -> tuple[int, np.ndarray]:
+    """Connected-component label per face after cutting along the seams.
 
-    Components containing a panel spec's anchor_face get that spec; others
-    get an auto-generated name and default metadata.
+    Returns (number of components, per-face label array). This is the
+    split preview: the GUI colours faces by label before committing.
     """
     faces = np.asarray(mesh.faces, dtype=np.int64)
-    vertices = np.asarray(mesh.vertices, dtype=float)
-
-    seam_edges = _seam_edge_set(faces, spec.seams)
+    seam_edges = _seam_edge_set(faces, seams)
 
     # Face adjacency graph, minus adjacency across seam edges.
     adjacency = np.asarray(mesh.face_adjacency)  # (k, 2) face index pairs
@@ -127,9 +129,19 @@ def split_mesh(mesh: trimesh.Trimesh, spec: SeamSpec) -> list[Panel]:
         (np.ones(len(kept)), (kept[:, 0], kept[:, 1])),
         shape=(len(faces), len(faces)),
     )
-    n_components, labels = scipy.sparse.csgraph.connected_components(
-        graph, directed=False
-    )
+    return scipy.sparse.csgraph.connected_components(graph, directed=False)
+
+
+def split_mesh(mesh: trimesh.Trimesh, spec: SeamSpec) -> list[Panel]:
+    """Cut the mesh along the seam paths and return one Panel per component.
+
+    Components containing a panel spec's anchor_face get that spec; others
+    get an auto-generated name and default metadata.
+    """
+    faces = np.asarray(mesh.faces, dtype=np.int64)
+    vertices = np.asarray(mesh.vertices, dtype=float)
+
+    n_components, labels = face_labels(mesh, spec.seams)
 
     panels = []
     for component in range(n_components):

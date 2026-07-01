@@ -26,10 +26,35 @@ The pipeline:
 
 ```bash
 uv sync
-uv run flatpack demo -o demo/          # synthetic doubly-curved patch, end to end
+uv run flatpack gui shell.obj -o pattern/   # point-and-click seam editor (browser)
+uv run flatpack demo -o demo/               # synthetic doubly-curved patch, end to end
 uv run flatpack flatten shell.obj seams.yaml -o pattern/
-uv run pytest                          # the whole test suite
+uv run pytest                               # the whole test suite
 ```
+
+## GUI
+
+`flatpack gui [mesh.obj]` starts a local server (stdlib only, no extra
+dependencies; three.js is vendored so it works offline) and opens a
+browser with the seam editor. Omit the mesh argument to play with a
+synthetic demo patch.
+
+- **Draw seam** mode: click vertices on the mesh; between clicks the seam
+  snaps to the shortest path along the surface (server-side Dijkstra), so
+  a seam across the whole shell takes a handful of clicks. *Finish seam*
+  commits it; *Undo leg* steps back one click.
+- **Preview split** colours the mesh by the panels your seams produce.
+  Click a panel to name it and pick its fabric and stretch axis.
+- **Notch** mode toggles match notches on seam vertices (they end up on
+  both panels that share the seam, which is what you want for alignment).
+- **Grainline** mode: select a panel, click two vertices.
+- **Generate pattern** runs the exact same pipeline as the CLI into the
+  output directory, pops up the SVG preview, and lists per-panel
+  distortion/fabric-fit numbers with download links. **Save seams.yaml**
+  writes the spec so the whole session is reproducible from the CLI.
+
+Everything the mouse can do is also scriptable from the browser console
+via `window.flatpack` (used by the automated browser test).
 
 `flatpack demo` builds a sphere patch (think: domed back panel), splits it
 down the middle, flattens both halves — one as silnylon, one as
@@ -117,13 +142,14 @@ src/flatpack/
   export.py      panel layout, seam allowance, notches, grainline; SVG/DXF
   tiling.py      letter/A4 page tiling with overlap + registration marks
   pipeline.py    end-to-end orchestration
-  cli.py         `flatpack flatten` / `flatpack demo`
+  cli.py         `flatpack flatten` / `flatpack demo` / `flatpack gui`
+  gui/
+    server.py    stdlib HTTP server + JSON API behind the GUI
+    static/      index.html, app.js (three.js seam editor), vendored three.js
 ```
 
 ## Limitations / next steps
 
-- Seam paths are typed by vertex index; an interactive picker (or import
-  from Blender vertex groups) would remove the main friction point.
 - Dart placement is reported, not automatically drafted into the outline.
 - Panel packing is a simple left-to-right shelf; no nesting.
 - The relaxation is a damped spring iteration, not a full ARAP solve —

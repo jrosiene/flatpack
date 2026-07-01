@@ -41,7 +41,32 @@ def main(argv: list[str] | None = None) -> int:
     p_demo.add_argument("-o", "--outdir", default="demo", help="output directory")
     p_demo.add_argument("--page", choices=["letter", "a4"], default="letter")
 
+    p_gui = sub.add_parser(
+        "gui", help="open the browser GUI to draw seams on a mesh"
+    )
+    p_gui.add_argument(
+        "mesh",
+        nargs="?",
+        help="OBJ/PLY shell mesh; omit to edit a synthetic demo patch",
+    )
+    p_gui.add_argument("-o", "--outdir", default="pattern", help="output directory")
+    p_gui.add_argument("--port", type=int, default=8787)
+    p_gui.add_argument("--no-browser", action="store_true", help="don't open a browser")
+
     args = parser.parse_args(argv)
+
+    if args.command == "gui":
+        from flatpack.gui import serve
+
+        mesh_path = args.mesh
+        if mesh_path is None:
+            outdir = Path(args.outdir)
+            outdir.mkdir(parents=True, exist_ok=True)
+            mesh_path = outdir / "demo_shell.obj"
+            make_sphere_patch(radius=200.0, half_width=120.0, n=25).export(str(mesh_path))
+            print(f"no mesh given; editing synthetic patch {mesh_path}")
+        serve(mesh_path, args.outdir, port=args.port, open_browser=not args.no_browser)
+        return 0
 
     if args.command == "flatten":
         results = process_files(

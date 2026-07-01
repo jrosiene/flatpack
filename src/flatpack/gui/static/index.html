@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>flatpack — seam editor</title>
+<link rel="stylesheet" href="/style.css">
+<link rel="icon" href="data:,">
+<script type="importmap">
+  { "imports": { "three": "/vendor/three.module.min.js" } }
+</script>
+</head>
+<body>
+<div id="viewport"></div>
+
+<aside id="sidebar">
+  <h1>flatpack</h1>
+  <div id="mesh-info" class="muted">loading mesh…</div>
+
+  <section>
+    <h2>Mode</h2>
+    <div id="mode-buttons">
+      <button id="mode-orbit" class="mode active" title="Rotate/pan/zoom only">Orbit</button>
+      <button id="mode-seam" class="mode" title="Click vertices; the seam follows the surface between clicks">Draw seam</button>
+      <button id="mode-notch" class="mode" title="Click a vertex to add a match notch">Notch</button>
+      <button id="mode-grain" class="mode" title="Click two vertices to set the selected panel's grainline">Grainline</button>
+    </div>
+    <div id="mode-hint" class="muted"></div>
+  </section>
+
+  <section>
+    <h2>Seams</h2>
+    <ul id="seam-list"></ul>
+    <div class="row">
+      <button id="finish-seam" disabled>Finish seam</button>
+      <button id="undo-leg" disabled>Undo leg</button>
+    </div>
+  </section>
+
+  <section>
+    <h2>Panels</h2>
+    <button id="preview-split">Preview split</button>
+    <ul id="panel-list"></ul>
+    <div id="panel-props" class="hidden">
+      <label>Name <input id="panel-name" type="text"></label>
+      <label>Fabric
+        <select id="panel-fabric">
+          <option>rigid</option><option>silnylon</option><option>xpac</option>
+          <option>ultrastretch</option><option>powermesh</option>
+        </select>
+      </label>
+      <label>Stretch axis (° from grain) <input id="panel-axis" type="number" value="0" step="5"></label>
+      <div class="muted" id="panel-extra"></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Output</h2>
+    <label>Seam allowance (mm) <input id="allowance" type="number" value="10" step="1"></label>
+    <div class="row">
+      <button id="generate">Generate pattern</button>
+      <button id="save-spec">Save seams.yaml</button>
+    </div>
+    <div id="status" class="muted"></div>
+    <pre id="report" class="hidden"></pre>
+    <div id="downloads"></div>
+  </section>
+</aside>
+
+<div id="svg-preview" class="hidden">
+  <div id="svg-preview-inner">
+    <button id="close-preview">close ×</button>
+    <img id="svg-img" alt="generated pattern">
+  </div>
+</div>
+
+<script type="module" src="/app.js"></script>
+</body>
+</html>
