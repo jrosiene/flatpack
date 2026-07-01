@@ -1,0 +1,130 @@
+# flatpack
+
+Convert a 3D backpack shell (triangulated mesh from CadQuery, OpenSCAD,
+Blender, ...) into flat 2D fabric panels for MYOG pattern drafting.
+
+The pipeline:
+
+1. **Input** — a triangulated mesh (OBJ/PLY preferred, STL accepted) in
+   millimetres. Parametric CadQuery/OpenSCAD surfaces enter by tessellating
+   to a mesh first.
+2. **Seams** — you cut the shell into panels by listing vertex paths in a
+   small YAML file (see below). No automatic seam-finding.
+3. **Flattening** — each panel is flattened with a Least Squares Conformal
+   Map (LSCM, implemented from scratch in ~100 lines of numpy/scipy and
+   validated against libigl in the test suite). Per-triangle area and angle
+   distortion is reported so you know where a dart or relief cut is needed.
+4. **Fabric awareness** — each panel can name a fabric (silnylon, X-Pac,
+   UltraStretch, ...) and a stretch axis. Distortion the fabric can absorb
+   is not flagged, and an anisotropic relaxation step biases residual error
+   into the stretchy direction.
+5. **Output** — seam-allowance-offset outlines with notches, grainline
+   arrows and labels as true-scale SVG and DXF, plus letter/A4 page tiles
+   (with overlap strips, crop marks and page labels) for home printing.
+
+## Quick start
+
+```bash
+uv sync
+uv run flatpack demo -o demo/          # synthetic doubly-curved patch, end to end
+uv run flatpack flatten shell.obj seams.yaml -o pattern/
+uv run pytest                          # the whole test suite
+```
+
+`flatpack demo` builds a sphere patch (think: domed back panel), splits it
+down the middle, flattens both halves — one as silnylon, one as
+UltraStretch — and writes `pattern.svg`, `pattern.dxf`, tiled
+`page_A1.svg`-style sheets and a `report.json` with distortion and
+fabric-fit numbers. It also prints a per-panel report:
+
+```
+panel 'left'  (silnylon, 288 triangles)
+  area ratio      mean 1.000   range [0.960, 1.043]
+  strain          stretch max 2.2%   compress max 2.1%
+  angle error     mean 0.05 deg   max 0.15 deg
+  fabric fit      93% ok, 9 need dart, 12 need relief
+  worst spot at   uv (12, -48) mm - consider a dart or relief cut there
+```
+
+## Seam file format
+
+Vertex and face indices refer to the mesh as loaded (`process=False`, so
+the file's vertex order is preserved — use OBJ or PLY; STL stores no
+shared vertices).
+
+```yaml
+units: mm
+seam_allowance: 10          # mm
+seams:
+  - name: side              # names are documentation only
+    path: [3, 18, 33, 48]   # consecutive entries must share a mesh edge
+panels:
+  - name: front
+    anchor_face: 12         # any face index inside this panel
+    fabric: ultrastretch    # see flatpack.fabric.FABRICS; default "rigid"
+    stretch_axis_deg: 0     # stretch axis, degrees from the grainline
+    grain: [3, 48]          # vertex pair defining the grainline
+    notches: [18]           # boundary vertices to mark with notches
+```
+
+Finding vertex indices: any mesh viewer that shows indices works
+(MeshLab: Render → Show Label; Blender: indices in edit mode via
+developer extras). A helper for interactive picking is a natural next
+step.
+
+## How to read the distortion report
+
+For each triangle we compute the singular values σ1 ≥ σ2 of the 3D→2D
+map. σ is (flat length) / (surface length) along a principal direction:
+
+- **σ > 1**: the cut piece is bigger than the surface there — the excess
+  must be darted or gathered out (no fabric stretches negatively).
+- **σ < 1**: the piece is smaller — the fabric must stretch by 1−σ to
+  reach. Flagged only if that exceeds the fabric's capability in that
+  direction (plus 2% sewing ease).
+- σ1/σ2 is angle (shear) distortion; LSCM keeps it near 1 by design, so
+  almost all error shows up as area, which is the honest quantity for
+  deciding on darts.
+
+`report.json` and the CLI output include the uv location of the worst
+triangle so you know where to put the dart.
+
+## Library choice: why trimesh + a from-scratch LSCM
+
+Evaluated for the mesh/flattening core:
+
+| option | verdict |
+|---|---|
+| **trimesh** (chosen, mesh backbone) | Light, ubiquitous, great STL/OBJ/PLY I/O, face adjacency and graph utilities. No flattening of its own, which is fine. |
+| **libigl python bindings** (chosen, tests only) | Has `igl.lscm` and installs cleanly from wheels, but the Python API has churned between releases, and we'd still write all the distortion/fabric code ourselves. Used as a *reference oracle*: the test suite checks our LSCM against `igl.lscm` (dev dependency only). |
+| **from-scratch LSCM** (chosen, runtime) | The whole solver is ~100 readable lines on `scipy.sparse` (`flatten.py`), it's validated against libigl and against developable surfaces, and it's easy to extend — the fabric-aware relaxation hooks straight into it. |
+| **Blender `bpy`** (rejected) | ~300 MB, pinned to specific Python versions, UV tools are interactive-editor-shaped. Overkill for a library. |
+
+ABF/ABF++ would give marginally better angle preservation but is much
+more code for little gain at panel scale; LSCM distortion numbers tell
+you where darts go either way.
+
+## Package layout
+
+```
+src/flatpack/
+  synthetic.py   test surfaces: plane, cylinder (developable), sphere, saddle
+  meshutil.py    triangle frames, boundary loops, edge utilities
+  flatten.py     LSCM solver (the core)
+  distortion.py  per-triangle singular-value metrics
+  fabric.py      fabric model, fit check, anisotropic relaxation
+  seams.py       seam YAML + mesh splitting into panels
+  export.py      panel layout, seam allowance, notches, grainline; SVG/DXF
+  tiling.py      letter/A4 page tiling with overlap + registration marks
+  pipeline.py    end-to-end orchestration
+  cli.py         `flatpack flatten` / `flatpack demo`
+```
+
+## Limitations / next steps
+
+- Seam paths are typed by vertex index; an interactive picker (or import
+  from Blender vertex groups) would remove the main friction point.
+- Dart placement is reported, not automatically drafted into the outline.
+- Panel packing is a simple left-to-right shelf; no nesting.
+- The relaxation is a damped spring iteration, not a full ARAP solve —
+  good enough to bias error into the stretch axis, not a simulation.
