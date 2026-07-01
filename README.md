@@ -22,13 +22,60 @@ The pipeline:
    arrows and labels as true-scale SVG and DXF, plus letter/A4 page tiles
    (with overlap strips, crop marks and page labels) for home printing.
 
-## Quick start
+## Install
+
+You need Python 3.11+ and either [uv](https://docs.astral.sh/uv/) (recommended)
+or plain pip.
 
 ```bash
-uv sync
-uv run flatpack gui shell.obj -o pattern/   # point-and-click seam editor (browser)
-uv run flatpack demo -o demo/               # synthetic doubly-curved patch, end to end
-uv run flatpack flatten shell.obj seams.yaml -o pattern/
+git clone https://github.com/jrosiene/flatpack.git
+cd flatpack
+uv sync            # creates .venv and installs everything (incl. test deps)
+```
+
+Without uv:
+
+```bash
+git clone https://github.com/jrosiene/flatpack.git
+cd flatpack
+python3 -m venv .venv
+source .venv/bin/activate       # Windows: .venv\Scripts\activate
+pip install -e .
+```
+
+## Quick GUI demo (no mesh needed)
+
+```bash
+uv run flatpack gui             # or just `flatpack gui` in an activated venv
+```
+
+This generates a synthetic doubly-curved patch (a dome, like a pack back
+panel), starts a local server, and opens the seam editor in your browser
+at http://127.0.0.1:8787. Try this flow:
+
+1. Click **Draw seam**, then click a vertex near the top edge of the dome
+   and another near the bottom edge — the seam snaps to the surface
+   between your clicks. Click **Finish seam**.
+2. Click **Preview split** — the two panels light up in different colours.
+3. Click a panel in the list, give it a name and a fabric
+   (e.g. `ultrastretch`).
+4. Click **Generate pattern** — you get the flattened panels with seam
+   allowance as SVG/DXF, print-ready tiled pages, and a per-panel
+   distortion report, all written to `pattern/` with download links in
+   the browser.
+
+To work on your own shell, pass a mesh (OBJ or PLY preferred — STL loses
+the vertex indexing that seam files rely on):
+
+```bash
+uv run flatpack gui shell.obj -o pattern/
+```
+
+## Other commands
+
+```bash
+uv run flatpack demo -o demo/               # headless end-to-end demo, no browser
+uv run flatpack flatten shell.obj seams.yaml -o pattern/   # CLI pipeline
 uv run pytest                               # the whole test suite
 ```
 
