@@ -2,8 +2,18 @@
 html, body { margin: 0; height: 100%; font-family: system-ui, sans-serif; }
 body { display: flex; }
 
-#viewport { flex: 1; min-width: 0; }
+#viewport { flex: 1; min-width: 0; position: relative; }
 #viewport canvas { display: block; }
+#nav-help {
+  position: absolute; left: 10px; bottom: 10px; z-index: 5;
+  background: rgba(28, 30, 34, .75); color: #c8ccd2;
+  font-size: 12px; padding: 5px 10px; border-radius: 5px;
+  pointer-events: none;
+}
+#nav-help kbd {
+  background: #2e3238; border: 1px solid #4a4f57; border-radius: 3px;
+  padding: 0 4px; font-size: 11px;
+}
 
 #sidebar {
   width: 300px; padding: 12px 16px; overflow-y: auto;

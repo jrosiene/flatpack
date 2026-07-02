@@ -3,13 +3,11 @@
 Convert a 3D backpack shell (triangulated mesh from CadQuery, OpenSCAD,
 Blender, ...) into flat 2D fabric panels for MYOG pattern drafting.
 
-**Windows, no Python?** Grab `flatpack.exe` from the latest
-[release](../../releases) (or the `flatpack-windows` artifact of any
-[build run](../../actions)) and double-click it — the seam editor opens in
-your browser with a demo shell. Drag a mesh file onto the exe to edit
-your own. Windows SmartScreen will warn about the unsigned exe the first
-time: choose "More info" → "Run anyway". The console window that opens
-alongside shows the local URL and can be ignored otherwise.
+**Windows, no Python?** A standalone `flatpack.exe` can be built in one
+command on any Windows machine with Python — see
+[Building the executable yourself](#building-the-executable-yourself).
+Double-clicking the exe opens the seam editor in your browser with a
+demo shell; dragging a mesh file onto it opens that mesh.
 
 The pipeline:
 
@@ -98,6 +96,10 @@ dependencies; three.js is vendored so it works offline) and opens a
 browser with the seam editor. Omit the mesh argument to play with a
 synthetic demo patch.
 
+- **Navigation** (Fusion 360 bindings, shown in the corner of the
+  viewport): middle-drag pans, Shift+middle-drag orbits, wheel zooms —
+  in every mode, so you can orbit while drawing a seam. In Orbit mode,
+  plain left-drag also orbits (for trackpads without a middle button).
 - **Draw seam** mode: click vertices on the mesh; between clicks the seam
   snaps to the shortest path along the surface (server-side Dijkstra), so
   a seam across the whole shell takes a handful of clicks. *Finish seam*
@@ -249,7 +251,7 @@ src/flatpack/
     server.py    stdlib HTTP server + JSON API behind the GUI
     static/      index.html, app.js (three.js seam editor), vendored three.js
 packaging/       PyInstaller entry + spec for the standalone executable
-.github/workflows/build.yml   tests + Windows exe build (artifact / release)
+.github/workflows/build.yml   CI tests
 ```
 
 ## Building the executable yourself
@@ -259,10 +261,13 @@ uv run --with 'pyinstaller>=6.0' pyinstaller packaging/flatpack.spec
 ```
 
 produces `dist/flatpack` for the platform you run it on (`flatpack.exe`
-on Windows — PyInstaller does not cross-compile, which is why CI builds
-the Windows one). The exe with no arguments opens the GUI; with a mesh
-path it opens the GUI on that mesh; `flatten` / `demo` / `gui`
-subcommands work as in the CLI.
+on Windows; on Windows without uv: `pip install . "pyinstaller>=6.0"`
+then `pyinstaller packaging/flatpack.spec`. PyInstaller does not
+cross-compile, so the exe must be built on Windows). The exe with no
+arguments opens the GUI; with a mesh path it opens the GUI on that mesh;
+`flatten` / `demo` / `gui` subcommands work as in the CLI. Windows
+SmartScreen warns about unsigned executables the first time: choose
+"More info" → "Run anyway".
 
 ## Limitations / next steps
 

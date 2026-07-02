@@ -15,53 +15,12 @@ jobs:
       - run: uv sync
       - run: uv run pytest -q
 
-  windows-exe:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install package and build tools
-        run: pip install . "pyinstaller>=6.0" pytest libigl
-
-      - name: Run the test suite on Windows
-        run: pytest -q
-
-      - name: Build flatpack.exe
-        run: pyinstaller packaging/flatpack.spec --noconfirm
-
-      - name: Smoke test - pipeline
-        run: |
-          dist\flatpack.exe demo -o smoke_demo
-          if (!(Test-Path smoke_demo\pattern.svg)) { throw "demo produced no pattern.svg" }
-          if (!(Test-Path smoke_demo\pattern.dxf)) { throw "demo produced no pattern.dxf" }
-
-      - name: Smoke test - GUI server
-        run: |
-          $p = Start-Process -FilePath dist\flatpack.exe `
-            -ArgumentList "gui","--no-browser","--port","8799","-o","smoke_gui" `
-            -PassThru -NoNewWindow
-          $ok = $false
-          foreach ($i in 1..30) {
-            try {
-              $mesh = Invoke-WebRequest http://127.0.0.1:8799/api/mesh -UseBasicParsing -TimeoutSec 2
-              $js = Invoke-WebRequest http://127.0.0.1:8799/vendor/three.module.min.js -UseBasicParsing -TimeoutSec 5
-              if ($mesh.StatusCode -eq 200 -and $js.StatusCode -eq 200) { $ok = $true; break }
-            } catch { Start-Sleep -Seconds 1 }
-          }
-          Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
-          if (-not $ok) { throw "GUI server did not come up or static assets missing" }
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: flatpack-windows
-          path: dist/flatpack.exe
-          retention-days: 30
-
-      - name: Attach to release
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: dist/flatpack.exe
+  # The standalone Windows executable is no longer built in CI (the
+  # artifact route proved awkward to distribute). To build it yourself on
+  # a Windows machine:
+  #
+  #   pip install . "pyinstaller>=6.0"
+  #   pyinstaller packaging/flatpack.spec
+  #
+  # which produces dist/flatpack.exe. See README "Building the
+  # executable yourself".

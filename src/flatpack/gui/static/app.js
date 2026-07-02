@@ -56,6 +56,18 @@ scene.background = new THREE.Color(0x24262b);
 const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 1e6);
 const controls = new OrbitControls(camera, renderer.domElement);
 
+// Fusion 360 navigation: middle-drag pans, Shift+middle-drag orbits,
+// wheel zooms. OrbitControls inverts a PAN binding to rotate while a
+// modifier key is held, which is exactly the Fusion scheme. Because the
+// middle button never conflicts with left-click picking, navigation
+// works in every mode. Left-drag additionally orbits in Orbit mode
+// (fallback for mice/trackpads without a middle button).
+controls.mouseButtons = {
+  LEFT: THREE.MOUSE.ROTATE,
+  MIDDLE: THREE.MOUSE.PAN,
+  RIGHT: THREE.MOUSE.PAN,
+};
+
 scene.add(new THREE.HemisphereLight(0xffffff, 0x3a3d44, 1.1));
 const sun = new THREE.DirectionalLight(0xffffff, 1.4);
 sun.position.set(1, 2, 1.5);
@@ -223,9 +235,11 @@ function pickVertex(clientX, clientY) {
 }
 
 let downAt = null;
-renderer.domElement.addEventListener("pointerdown", e => { downAt = [e.clientX, e.clientY]; });
+renderer.domElement.addEventListener("pointerdown", e => {
+  downAt = e.button === 0 ? [e.clientX, e.clientY] : null;
+});
 renderer.domElement.addEventListener("pointerup", e => {
-  if (!downAt) return;
+  if (!downAt || e.button !== 0) return;  // only left-click picks
   const moved = Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]);
   downAt = null;
   if (moved > 5 || state.mode === "orbit") return;
@@ -658,7 +672,7 @@ function redrawOverlay() {
 // ---------------------------------------------------------------------------
 
 const HINTS = {
-  orbit: "drag to rotate, right-drag to pan, wheel to zoom",
+  orbit: "left-drag also orbits in this mode",
   seam: "click vertices; seam follows the surface between clicks",
   notch: "click a vertex to toggle a match notch",
   grain: "select a panel, then click two vertices",
@@ -669,7 +683,9 @@ const HINTS = {
 
 function setMode(mode) {
   state.mode = mode;
-  controls.enableRotate = mode === "orbit";
+  // Fusion-style navigation stays live in every mode; only left-drag
+  // orbit is reserved for Orbit mode (left-click picks elsewhere).
+  controls.mouseButtons.LEFT = mode === "orbit" ? THREE.MOUSE.ROTATE : null;
   for (const b of document.querySelectorAll("button.mode"))
     b.classList.toggle("active", b.id === `mode-${mode}`);
   document.getElementById("mode-hint").textContent = HINTS[mode];
@@ -762,5 +778,9 @@ window.flatpack = {
   selectPanel, toggleNotch, setMode, buildSpec, clearGrain, resetMesh,
   measureClick, applyScale, dartClick, markClick,
   setStraightCut: on => { document.getElementById("straight-cut").checked = on; },
+  cameraState: () => ({
+    position: camera.position.toArray(),
+    target: controls.target.toArray(),
+  }),
   ready: () => !!displayMesh,
 };
