@@ -122,6 +122,14 @@ synthetic demo patch.
   CLI.
 - **Preview split** colours the mesh by the panels your seams produce.
   Click a panel to name it and pick its fabric and stretch axis.
+- **Warp check** (on by default): after a split, each panel is flattened
+  and graded against its fabric's stretch tolerance. Panels that can't
+  lie flat get a coloured badge in the panel list (▲ marginal, ✕ high,
+  ⚠ can't flatten) with a tooltip explaining what's needed, a summary
+  line, and a red/orange marker on the mesh at the worst spot — so you
+  know exactly where to add a dart or another seam. It re-runs live as
+  you change a panel's fabric, stretch axis, or darts, so you can watch
+  a dart or a stretchier fabric clear the flag.
 - **Notch** mode toggles match notches on seam vertices (they end up on
   both panels that share the seam, which is what you want for alignment).
 - **Dart** mode: click the dart mouth (a boundary or seam vertex), then

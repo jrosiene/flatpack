@@ -83,7 +83,13 @@
 
   <section>
     <h2>Panels</h2>
-    <button id="preview-split">Preview split</button>
+    <div class="row">
+      <button id="preview-split">Preview split</button>
+      <label class="check" title="Flatten each panel and flag ones that warp beyond the chosen fabric's stretch tolerance">
+        <input type="checkbox" id="warp-check" checked> warp check
+      </label>
+    </div>
+    <div id="warp-summary" class="muted"></div>
     <ul id="panel-list"></ul>
     <div id="panel-props" class="hidden">
       <label>Name <input id="panel-name" type="text"></label>

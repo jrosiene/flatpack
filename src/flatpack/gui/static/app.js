@@ -36,6 +36,7 @@ const state = {
   dartPending: null,    // dart mouth awaiting an apex click
   marks: [],            // {vertex, type, label, toward}
   markPending: null,    // bar tack anchor awaiting a direction click
+  warp: {},             // panel name -> fabric-aware flattenability analysis
   diag: 1,              // mesh bbox diagonal, for sizing markers
 };
 
@@ -290,6 +291,12 @@ function placeMarker(m, v, size) {
   updateMarkerScale(m);
 }
 
+function placeMarkerAt(m, xyz, size) {
+  m.position.set(xyz[0], xyz[1], xyz[2]);
+  m.userData.markerSize = size;
+  updateMarkerScale(m);
+}
+
 // ---------------------------------------------------------------------------
 // click handling per mode
 // ---------------------------------------------------------------------------
@@ -345,6 +352,8 @@ async function dartClick(v) {
     state.dartPending = null;
     renderDartMarkLists();
     setStatus("dart added - intake is computed when you generate");
+    // A dart opens the panel, so re-check how much it relieved the warp.
+    analyzeWarp().catch(err => setStatus(err.message, true));
   }
   redrawOverlay();
 }
@@ -388,7 +397,12 @@ function renderDartMarkLists() {
     li.innerHTML = `<span>${dart.name} (${dart.path.length} verts)</span>`;
     const del = document.createElement("button");
     del.textContent = "×";
-    del.onclick = () => { state.darts.splice(i, 1); renderDartMarkLists(); redrawOverlay(); };
+    del.onclick = () => {
+      state.darts.splice(i, 1);
+      renderDartMarkLists();
+      redrawOverlay();
+      analyzeWarp().catch(err => setStatus(err.message, true));
+    };
     li.appendChild(del);
     dl.appendChild(li);
   });
@@ -544,7 +558,9 @@ function invalidateSplit() {
   state.labels = null;
   state.nPanels = 0;
   state.selectedPanel = null;
+  state.warp = {};
   renderPanelList();
+  updateWarpSummary();
   if (displayMesh) paintFaces();
 }
 
@@ -553,9 +569,44 @@ async function previewSplit() {
   const data = await api("/api/split", { seams });
   state.labels = data.labels;
   state.nPanels = data.n_panels;
+  state.warp = {};
   paintFaces();
   renderPanelList();
   setStatus(`${data.n_panels} panel(s)`);
+  await analyzeWarp();
+}
+
+// Flatten each panel and flag ones that warp beyond the chosen fabric's
+// stretch tolerance. Re-run whenever the split or a fabric/axis/dart
+// changes, so the flags track the current design live.
+async function analyzeWarp() {
+  if (!state.labels || !document.getElementById("warp-check").checked) {
+    state.warp = {};
+    renderPanelList();
+    updateWarpSummary();
+    redrawOverlay();
+    return;
+  }
+  const data = await api("/api/analyze", buildSpec());
+  state.warp = Object.fromEntries(data.panels.map(p => [p.name, p]));
+  renderPanelList();
+  updateWarpSummary();
+  redrawOverlay();
+}
+
+const WARP_ICON = { ok: "✓", marginal: "▲", high: "✕", error: "⚠" };
+
+function updateWarpSummary() {
+  const el = document.getElementById("warp-summary");
+  const entries = Object.values(state.warp);
+  if (!entries.length) { el.textContent = ""; return; }
+  const flagged = entries.filter(w => w.severity !== "ok");
+  if (!flagged.length) {
+    el.innerHTML = '<span class="warp-ok">✓ all panels flatten within fabric tolerance</span>';
+  } else {
+    el.innerHTML = `<span class="warp-high">${flagged.length} panel(s) warp beyond `
+      + `fabric tolerance</span> — see marked spots; add darts/seams there`;
+  }
 }
 
 function allSeamPaths() {
@@ -749,6 +800,15 @@ function redrawOverlay() {
       overlay.add(m);
     }
   }
+  // Warp flags: a marker at the worst-distorted spot of each panel that
+  // exceeds its fabric tolerance, so the user knows where a dart/seam is
+  // needed. Orange = marginal, red = high.
+  for (const w of Object.values(state.warp)) {
+    if (w.severity === "ok" || !w.worst_point_3d) continue;
+    const m = marker(w.severity === "marginal" ? 0xffb300 : 0xff1744);
+    placeMarkerAt(m, w.worst_point_3d, 0.013);
+    overlay.add(m);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -805,9 +865,27 @@ function renderPanelList() {
     li.classList.toggle("selected", label === state.selectedPanel);
     const color = "#" + new THREE.Color(PALETTE[label % PALETTE.length]).getHexString();
     li.innerHTML = `<span><span class="swatch" style="background:${color}"></span> ${props(label).name}</span>`;
+    const w = state.warp[props(label).name];
+    if (w) {
+      const badge = document.createElement("span");
+      badge.className = `warp warp-${w.severity}`;
+      badge.textContent = WARP_ICON[w.severity];
+      badge.title = warpTooltip(w);
+      li.appendChild(badge);
+    }
     li.onclick = () => selectPanel(label);
     ul.appendChild(li);
   }
+}
+
+function warpTooltip(w) {
+  if (w.severity === "error") return `cannot flatten: ${w.advice}`;
+  if (w.severity === "ok") return "flattens within fabric tolerance";
+  return (
+    `${(w.bad_area_fraction * 100).toFixed(0)}% of area exceeds ${w.fabric} `
+    + `tolerance (stretch ${w.max_stretch_pct.toFixed(0)}%, `
+    + `compress ${w.max_compress_pct.toFixed(0)}%)\n${w.advice}`
+  );
 }
 
 function updateButtons() {
@@ -853,11 +931,18 @@ document.getElementById("panel-name").oninput = e => {
   if (state.selectedPanel !== null) { props(state.selectedPanel).name = e.target.value; renderPanelList(); }
 };
 document.getElementById("panel-fabric").onchange = e => {
-  if (state.selectedPanel !== null) props(state.selectedPanel).fabric = e.target.value;
+  if (state.selectedPanel !== null) {
+    props(state.selectedPanel).fabric = e.target.value;
+    analyzeWarp().catch(err => setStatus(err.message, true));  // fabric changes the flags
+  }
 };
 document.getElementById("panel-axis").oninput = e => {
   if (state.selectedPanel !== null) props(state.selectedPanel).stretch_axis_deg = e.target.value;
 };
+document.getElementById("panel-axis").onchange = () =>
+  analyzeWarp().catch(err => setStatus(err.message, true));
+document.getElementById("warp-check").onchange = () =>
+  analyzeWarp().catch(err => setStatus(err.message, true));
 
 setMode("orbit");
 loadMesh().catch(e => setStatus(e.message, true));
@@ -867,7 +952,7 @@ window.flatpack = {
   state, addSeamVertex, finishSeam, previewSplit, generate, saveSpec,
   selectPanel, toggleNotch, setMode, buildSpec, clearGrain, resetMesh,
   measureClick, applyScale, dartClick, markClick,
-  addVertexClick, extendSeamToEdge, rescaleToMeasurement,
+  addVertexClick, extendSeamToEdge, rescaleToMeasurement, analyzeWarp,
   setStraightCut: on => { document.getElementById("straight-cut").checked = on; },
   cameraState: () => ({
     position: camera.position.toArray(),

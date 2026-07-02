@@ -22,6 +22,10 @@ to a small JSON API:
     POST /api/reset               restore the mesh as originally loaded
     POST /api/split               preview panel components for seam paths
                                   {"seams": [[...], ...]} -> {"labels": [...], ...}
+    POST /api/analyze             flag panels that warp beyond their fabric's
+                                  stretch tolerance; {spec dict} ->
+                                  {"panels": [{name, severity, advice,
+                                  worst_point_3d, ...}]}
     POST /api/generate            run the full pipeline, return the report
                                   {spec dict} -> {"report": ..., "files": [...]}
     POST /api/save                write seams.yaml next to the output (plus
@@ -51,6 +55,7 @@ import scipy.sparse.csgraph
 import trimesh
 import yaml
 
+from flatpack.analysis import analyze
 from flatpack.cut import cut_between, insert_vertex_on_edge
 from flatpack.meshutil import boundary_loops, unique_edges
 from flatpack.pipeline import process
@@ -211,6 +216,11 @@ class GuiState:
         n_components, labels = face_labels(self.mesh, seams)
         return {"n_panels": int(n_components), "labels": labels.tolist()}
 
+    def analyze_warp(self, spec_data: dict) -> dict:
+        """Grade each panel's flattenability against its fabric."""
+        spec = spec_from_dict(spec_data)
+        return {"panels": [a.as_dict() for a in analyze(self.mesh, spec)]}
+
     def generate(self, spec_data: dict) -> dict:
         spec = spec_from_dict(spec_data)
         self.outdir.mkdir(parents=True, exist_ok=True)
@@ -283,6 +293,8 @@ class GuiRequestHandler(SimpleHTTPRequestHandler):
                 payload = self.state.reset()
             elif self.path == "/api/split":
                 payload = self.state.split_preview(body.get("seams", []))
+            elif self.path == "/api/analyze":
+                payload = self.state.analyze_warp(body)
             elif self.path == "/api/generate":
                 payload = self.state.generate(body)
             elif self.path == "/api/save":

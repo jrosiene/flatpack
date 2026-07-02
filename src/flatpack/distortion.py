@@ -71,10 +71,18 @@ class DistortionReport:
             "angle_error_deg_max": float(self.max_angle_error_deg.max()),
         }
 
+    @property
+    def per_triangle_strain(self) -> np.ndarray:
+        """Worst principal strain magnitude per triangle (stretch or squash)."""
+        return np.maximum(self.sigma1 - 1.0, 1.0 - self.sigma2)
+
+    def worst_triangle_index(self) -> int:
+        """Index of the most distorted triangle (for 'add a dart here')."""
+        return int(np.argmax(self.per_triangle_strain))
+
     def worst_triangle_uv(self) -> np.ndarray:
         """uv location of the worst-distorted triangle (for 'add a dart here')."""
-        badness = np.maximum(self.sigma1 - 1.0, 1.0 - self.sigma2)
-        return self.centers_uv[int(np.argmax(badness))]
+        return self.centers_uv[self.worst_triangle_index()]
 
 
 def distortion_report(

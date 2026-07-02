@@ -74,6 +74,21 @@ def test_split_preview(server):
     assert len(set(data["labels"])) == 2
 
 
+def test_analyze_warp(server):
+    spec = {
+        "seams": [{"name": "center", "path": CENTER_SEAM}],
+        "panels": [{"name": "west", "anchor_face": 0, "fabric": "rigid"}],
+    }
+    data = call(server, "/api/analyze", spec)
+    panels = {p["name"]: p for p in data["panels"]}
+    assert "west" in panels
+    west = panels["west"]
+    assert west["severity"] in ("ok", "marginal", "high", "error")
+    assert "advice" in west and "fabric" in west
+    if west["severity"] not in ("ok", "error"):
+        assert len(west["worst_point_3d"]) == 3
+
+
 def test_split_with_bad_seam_is_a_clean_400(server):
     with pytest.raises(urllib.error.HTTPError) as err:
         call(server, "/api/split", {"seams": [[0, N * N - 1]]})

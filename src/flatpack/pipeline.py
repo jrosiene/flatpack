@@ -8,10 +8,10 @@ from pathlib import Path
 
 import trimesh
 
-from flatpack.distortion import distortion_report
+from flatpack.analysis import flatten_and_fit
 from flatpack.export import PanelLayout, layout_panel, pack_layouts, write_dxf, write_svg
-from flatpack.fabric import FABRICS, FabricFit, fabric_fit, relax_for_fabric
-from flatpack.flatten import FlattenResult, flatten
+from flatpack.fabric import FabricFit
+from flatpack.flatten import FlattenResult
 from flatpack.seams import Panel, SeamSpec, load_seam_spec, split_mesh
 from flatpack.tiling import write_tiled_svgs
 
@@ -45,30 +45,8 @@ def process(
     panels = split_mesh(mesh, spec)
     results = []
     for panel in panels:
-        flat = flatten(trimesh.Trimesh(panel.vertices, panel.faces, process=False))
-        fabric = FABRICS[panel.spec.fabric]
-
-        uv = flat.uv
-        if relax and (fabric.stretch_along > 0 or fabric.stretch_cross > 0):
-            # Panels are laid out grain-vertical; the fabric's stretch axis
-            # sits at stretch_axis_deg from the grain.
-            uv = relax_for_fabric(
-                panel.vertices,
-                panel.faces,
-                uv,
-                fabric,
-                stretch_axis_deg=90.0 + panel.spec.stretch_axis_deg,
-            )
-            flat = FlattenResult(
-                uv=uv,
-                distortion=distortion_report(panel.vertices, panel.faces, uv),
-                pins=flat.pins,
-            )
-
-        fit = fabric_fit(
-            flat.distortion, fabric, stretch_axis_deg=90.0 + panel.spec.stretch_axis_deg
-        )
-        layout = layout_panel(panel, uv, seam_allowance=spec.seam_allowance)
+        flat, _fabric, fit = flatten_and_fit(panel, relax=relax)
+        layout = layout_panel(panel, flat.uv, seam_allowance=spec.seam_allowance)
         results.append(PanelResult(panel=panel, flat=flat, fit=fit, layout=layout))
 
     layouts = [r.layout for r in results]
