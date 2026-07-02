@@ -3,6 +3,14 @@
 Convert a 3D backpack shell (triangulated mesh from CadQuery, OpenSCAD,
 Blender, ...) into flat 2D fabric panels for MYOG pattern drafting.
 
+**Windows, no Python?** Grab `flatpack.exe` from the latest
+[release](../../releases) (or the `flatpack-windows` artifact of any
+[build run](../../actions)) and double-click it — the seam editor opens in
+your browser with a demo shell. Drag a mesh file onto the exe to edit
+your own. Windows SmartScreen will warn about the unsigned exe the first
+time: choose "More info" → "Run anyway". The console window that opens
+alongside shows the local URL and can be ignored otherwise.
+
 The pipeline:
 
 1. **Input** — a triangulated mesh (OBJ/PLY preferred, STL accepted) in
@@ -22,10 +30,10 @@ The pipeline:
    arrows and labels as true-scale SVG and DXF, plus letter/A4 page tiles
    (with overlap strips, crop marks and page labels) for home printing.
 
-## Install
+## Install (from source)
 
 You need Python 3.11+ and either [uv](https://docs.astral.sh/uv/) (recommended)
-or plain pip.
+or plain pip. (Windows users can skip all of this — see the exe above.)
 
 ```bash
 git clone https://github.com/jrosiene/flatpack.git
@@ -203,7 +211,21 @@ src/flatpack/
   gui/
     server.py    stdlib HTTP server + JSON API behind the GUI
     static/      index.html, app.js (three.js seam editor), vendored three.js
+packaging/       PyInstaller entry + spec for the standalone executable
+.github/workflows/build.yml   tests + Windows exe build (artifact / release)
 ```
+
+## Building the executable yourself
+
+```bash
+uv run --with 'pyinstaller>=6.0' pyinstaller packaging/flatpack.spec
+```
+
+produces `dist/flatpack` for the platform you run it on (`flatpack.exe`
+on Windows — PyInstaller does not cross-compile, which is why CI builds
+the Windows one). The exe with no arguments opens the GUI; with a mesh
+path it opens the GUI on that mesh; `flatten` / `demo` / `gui`
+subcommands work as in the CLI.
 
 ## Limitations / next steps
 

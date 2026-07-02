@@ -5,3 +5,5 @@ dist/
 .pytest_cache/
 demo/
 pattern/
+build/
+*.spec.bak
