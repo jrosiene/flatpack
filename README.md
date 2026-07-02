@@ -151,6 +151,11 @@ synthetic demo patch.
   cm→mm, m→mm presets) rescales the mesh in place — everything downstream
   assumes millimetres. Seams, notches and grainlines survive scaling;
   *Reset mesh edits* restores the original.
+- **Edge lengths** (in the Output section): print each straight edge's
+  length along the pattern boundary, in cm or inches (or off). Lengths
+  are the true seam length along the boundary, so gently curved edges
+  read as tape-measure values; edges under 25 mm are skipped. Also
+  available from seam files via `edge_labels: cm|in`.
 - **Generate pattern** runs the exact same pipeline as the CLI into the
   output directory, pops up the SVG preview, and lists per-panel
   distortion/fabric-fit numbers with download links. **Save seams.yaml**

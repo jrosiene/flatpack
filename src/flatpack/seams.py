@@ -82,6 +82,9 @@ class SeamSpec:
     # interior gives a fisheye dart.
     darts: list[list[int]] = field(default_factory=list)
     marks: list[Mark] = field(default_factory=list)
+    # Print each straight boundary edge's length on the pattern:
+    # "none", "cm" or "in".
+    edge_labels: str = "none"
 
 
 @dataclass
@@ -134,6 +137,11 @@ def spec_from_dict(data: dict) -> SeamSpec:
         )
         for m in data.get("marks", [])
     ]
+    edge_labels = str(data.get("edge_labels", "none"))
+    if edge_labels not in ("none", "cm", "in"):
+        raise ValueError(
+            f"edge_labels must be 'none', 'cm' or 'in', not {edge_labels!r}"
+        )
     return SeamSpec(
         seams=seams,
         panels=panels,
@@ -141,6 +149,7 @@ def spec_from_dict(data: dict) -> SeamSpec:
         seam_allowance=float(data.get("seam_allowance", 10.0)),
         darts=darts,
         marks=marks,
+        edge_labels=edge_labels,
     )
 
 

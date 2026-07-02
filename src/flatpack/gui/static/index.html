@@ -104,6 +104,13 @@
   <section>
     <h2>Output</h2>
     <label>Seam allowance (mm) <input id="allowance" type="number" value="10" step="1"></label>
+    <label>Edge lengths
+      <select id="edge-units" title="Print each straight edge's length along the pattern boundary">
+        <option value="none">off</option>
+        <option value="cm">cm</option>
+        <option value="in">inches</option>
+      </select>
+    </label>
     <div class="row">
       <button id="generate">Generate pattern</button>
       <button id="save-spec">Save seams.yaml</button>

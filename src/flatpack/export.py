@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 
 import ezdxf
 import numpy as np
-from shapely.geometry import Polygon
+from shapely.geometry import LineString, Point, Polygon
 
 from flatpack.meshutil import boundary_loops, unique_edges
 from flatpack.seams import Panel
@@ -40,6 +40,24 @@ class Mark2D:
 
 
 @dataclass
+class EdgeLabel:
+    """Length annotation for one straight run of a panel's boundary."""
+
+    pos: np.ndarray  # (2,) midpoint, nudged toward the panel interior
+    angle_deg: float  # text rotation, kept upright
+    length_mm: float  # true seam length along the boundary (not the chord)
+
+
+def format_edge_length(length_mm: float, units: str) -> str:
+    """Human formatting for edge labels: 'cm' or 'in'."""
+    if units == "cm":
+        return f"{length_mm / 10.0:.1f} cm"
+    if units == "in":
+        return f'{length_mm / 25.4:.2f}"'
+    raise ValueError(f"unknown edge label units {units!r} (use 'cm' or 'in')")
+
+
+@dataclass
 class PanelLayout:
     """One panel's printable geometry, in sheet coordinates (mm, y up)."""
 
@@ -53,6 +71,7 @@ class PanelLayout:
     seam_allowance: float
     darts: list[tuple[np.ndarray, np.ndarray]]  # per dart: two legs, apex first
     marks: list[Mark2D]
+    edge_labels: list[EdgeLabel]
 
 
 def layout_panel(
@@ -111,6 +130,7 @@ def layout_panel(
         seam_allowance=seam_allowance,
         darts=_dart_layouts(panel, uv_t),
         marks=_mark_layouts(panel, uv_t),
+        edge_labels=_edge_labels(stitch, polygon),
     )
 
 
@@ -169,6 +189,78 @@ def _dart_layouts(panel: Panel, uv_t: np.ndarray) -> list[tuple[np.ndarray, np.n
                 leg2.append(cands[0])
         layouts.append((uv_t[leg1], uv_t[leg2]))
     return layouts
+
+
+def _edge_labels(
+    stitch: np.ndarray,
+    polygon: Polygon,
+    corner_tolerance: float = 2.0,
+    min_length: float = 25.0,
+) -> list[EdgeLabel]:
+    """Length annotations for the straight runs of the stitch boundary.
+
+    The boundary polyline is simplified (Douglas-Peucker) to find its
+    corners; each run between consecutive corners is one 'edge'. The
+    printed length is the true polyline length along the run — for a
+    straight edge that's the chord; for a gentle curve it's the seam
+    length, which is what you'd measure with a tape. Runs shorter than
+    min_length are skipped to avoid clutter.
+
+    The ring is rotated to start at the sharpest corner first: the loop's
+    arbitrary start vertex is always kept by the simplifier, and starting
+    mid-edge would split one straight edge into two labels.
+    """
+    stitch = np.roll(stitch, -_sharpest_corner(stitch), axis=0)
+    ring = np.vstack([stitch, stitch[:1]])
+    simplified = np.asarray(
+        LineString(ring).simplify(corner_tolerance).coords
+    )
+
+    # Douglas-Peucker keeps original vertices, so corners map back to
+    # exact boundary indices. Keep first occurrences: the ring's closing
+    # point duplicates index 0 and must map to it, with the wraparound
+    # handled below.
+    index_of: dict = {}
+    for i, (x, y) in enumerate(ring):
+        index_of.setdefault((round(x, 9), round(y, 9)), i)
+    corner_indices = [
+        index_of[(round(x, 9), round(y, 9))] for x, y in simplified
+    ]
+
+    seg_lengths = np.linalg.norm(np.diff(ring, axis=0), axis=1)
+    cumulative = np.concatenate([[0.0], np.cumsum(seg_lengths)])
+    total = float(cumulative[-1])
+
+    labels = []
+    for a, b in zip(corner_indices[:-1], corner_indices[1:]):
+        length = float(cumulative[b] - cumulative[a])
+        if b <= a:  # segment closing the loop back to the start
+            length += total
+        chord = ring[b] - ring[a]
+        chord_len = float(np.linalg.norm(chord))
+        if length < min_length or chord_len < 1e-9:
+            continue
+
+        angle = np.degrees(np.arctan2(chord[1], chord[0]))
+        if angle > 90.0 or angle <= -90.0:
+            angle += 180.0 if angle <= -90.0 else -180.0
+
+        midpoint = (ring[a] + ring[b]) / 2.0
+        normal = np.array([-chord[1], chord[0]]) / chord_len
+        inward = midpoint + normal * 5.0
+        if not polygon.contains(Point(inward)):
+            inward = midpoint - normal * 5.0
+        labels.append(EdgeLabel(pos=inward, angle_deg=float(angle), length_mm=length))
+    return labels
+
+
+def _sharpest_corner(stitch: np.ndarray) -> int:
+    """Index of the boundary vertex with the largest turning angle."""
+    before = stitch - np.roll(stitch, 1, axis=0)
+    after = np.roll(stitch, -1, axis=0) - stitch
+    cross = before[:, 0] * after[:, 1] - before[:, 1] * after[:, 0]
+    dot = np.einsum("ij,ij->i", before, after)
+    return int(np.argmax(np.abs(np.arctan2(cross, dot))))
 
 
 def _mark_layouts(panel: Panel, uv_t: np.ndarray) -> list[Mark2D]:
@@ -245,6 +337,8 @@ def _shift_layout(layout: PanelLayout, shift: np.ndarray) -> None:
     layout.darts = [(a + shift, b + shift) for a, b in layout.darts]
     for mark in layout.marks:
         mark.pos = mark.pos + shift
+    for label in layout.edge_labels:
+        label.pos = label.pos + shift
 
 
 def sheet_bbox(layouts: list[PanelLayout], margin: float = 5.0) -> np.ndarray:
@@ -258,16 +352,19 @@ def sheet_bbox(layouts: list[PanelLayout], margin: float = 5.0) -> np.ndarray:
 # ---------------------------------------------------------------------------
 
 
-def svg_content_group(layouts: list[PanelLayout], flip_height: float) -> ET.Element:
+def svg_content_group(
+    layouts: list[PanelLayout], flip_height: float, edge_units: str | None = None
+) -> ET.Element:
     """All panels as one SVG <g>. flip_height maps our y-up mm coordinates
-    to SVG's y-down convention."""
+    to SVG's y-down convention. edge_units ('cm' or 'in') turns on edge
+    length labels."""
     group = ET.Element("g", {"id": "pattern"})
     for layout in layouts:
-        group.append(_panel_group(layout, flip_height))
+        group.append(_panel_group(layout, flip_height, edge_units))
     return group
 
 
-def _panel_group(layout: PanelLayout, h: float) -> ET.Element:
+def _panel_group(layout: PanelLayout, h: float, edge_units: str | None = None) -> ET.Element:
     def pts(a: np.ndarray) -> str:
         return " ".join(f"{x:.3f},{h - y:.3f}" for x, y in a)
 
@@ -338,6 +435,26 @@ def _panel_group(layout: PanelLayout, h: float) -> ET.Element:
         )
     for mark in layout.marks:
         g.append(_mark_svg(mark, h))
+    if edge_units:
+        for label in layout.edge_labels:
+            text = ET.SubElement(
+                g,
+                "text",
+                {
+                    "x": f"{label.pos[0]:.3f}",
+                    "y": f"{h - label.pos[1]:.3f}",
+                    "font-size": "5",
+                    "font-family": "sans-serif",
+                    "text-anchor": "middle",
+                    "class": "edge-length",
+                    # SVG y is flipped, so the rotation flips sign too.
+                    "transform": (
+                        f"rotate({-label.angle_deg:.2f} "
+                        f"{label.pos[0]:.3f} {h - label.pos[1]:.3f})"
+                    ),
+                },
+            )
+            text.text = format_edge_length(label.length_mm, edge_units)
     start, end = layout.grain_arrow
     ET.SubElement(
         g,
@@ -433,7 +550,9 @@ def _mark_svg(mark: Mark2D, h: float) -> ET.Element:
     return g
 
 
-def write_svg(layouts: list[PanelLayout], path: str) -> None:
+def write_svg(
+    layouts: list[PanelLayout], path: str, edge_units: str | None = None
+) -> None:
     """One SVG sheet with all panels, in real-world millimetres."""
     bbox = sheet_bbox(layouts)
     w = bbox[2] - bbox[0]
@@ -448,7 +567,7 @@ def write_svg(layouts: list[PanelLayout], path: str) -> None:
             "viewBox": f"{bbox[0]:.3f} 0 {w:.3f} {h:.3f}",
         },
     )
-    svg.append(svg_content_group(layouts, flip_height=bbox[3]))
+    svg.append(svg_content_group(layouts, flip_height=bbox[3], edge_units=edge_units))
     ET.ElementTree(svg).write(path, xml_declaration=True, encoding="unicode")
 
 
@@ -457,7 +576,9 @@ def write_svg(layouts: list[PanelLayout], path: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def write_dxf(layouts: list[PanelLayout], path: str) -> None:
+def write_dxf(
+    layouts: list[PanelLayout], path: str, edge_units: str | None = None
+) -> None:
     """DXF (mm) with layers CUT, STITCH, NOTCH, ANNOT."""
     doc = ezdxf.new(setup=True)
     doc.units = ezdxf.units.MM
@@ -505,6 +626,14 @@ def write_dxf(layouts: list[PanelLayout], path: str) -> None:
                 msp.add_text(
                     mark.label, height=5.0, dxfattribs={"layer": "MARK"}
                 ).set_placement(tuple(mark.pos + (5.0, 4.0)))
+        if edge_units:
+            for label in layout.edge_labels:
+                msp.add_text(
+                    format_edge_length(label.length_mm, edge_units),
+                    height=5.0,
+                    rotation=label.angle_deg,
+                    dxfattribs={"layer": "ANNOT"},
+                ).set_placement(tuple(label.pos))
         start, end = layout.grain_arrow
         msp.add_line(start, end, dxfattribs={"layer": "ANNOT"})
         msp.add_text(

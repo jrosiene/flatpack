@@ -621,6 +621,7 @@ function buildSpec() {
   return {
     units: "mm",
     seam_allowance: Number(document.getElementById("allowance").value) || 10,
+    edge_labels: document.getElementById("edge-units").value,
     seams: state.seams.map(s => ({ name: s.name, path: s.legs.flat() })),
     darts: state.darts.map(d => ({ name: d.name, path: d.path })),
     marks: state.marks,
