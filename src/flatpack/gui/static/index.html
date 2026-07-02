@@ -36,9 +36,20 @@
       <button id="mode-notch" class="mode" title="Click a vertex to add a match notch">Notch</button>
       <button id="mode-grain" class="mode" title="Click two vertices to set the selected panel's grainline">Grainline</button>
       <button id="mode-measure" class="mode" title="Click two vertices to measure the straight-line distance in mm">Measure</button>
+      <button id="mode-dart" class="mode" title="Click a boundary/seam vertex (dart mouth), then the apex; the flattener computes the intake">Dart</button>
+      <button id="mode-mark" class="mode" title="Place sewing marks: bar tacks, attachment points">Mark</button>
     </div>
     <div id="mode-hint" class="muted"></div>
     <div id="measure-out" class="muted"></div>
+    <div id="mark-opts" class="hidden">
+      <label>Mark type
+        <select id="mark-type">
+          <option value="bartack">bar tack</option>
+          <option value="attach">attachment point</option>
+        </select>
+      </label>
+      <label>Label <input id="mark-label" type="text" placeholder="e.g. shoulder strap"></label>
+    </div>
   </section>
 
   <section>
@@ -51,6 +62,12 @@
       <button id="finish-seam" disabled>Finish seam</button>
       <button id="undo-leg" disabled>Undo leg</button>
     </div>
+  </section>
+
+  <section>
+    <h2>Darts &amp; marks</h2>
+    <ul id="dart-list"></ul>
+    <ul id="mark-list"></ul>
   </section>
 
   <section>

@@ -53,6 +53,21 @@ class PanelSpec:
     notches: list[int] = field(default_factory=list)  # original vertex indices
 
 
+@dataclass(frozen=True)
+class Mark:
+    """A sewing annotation anchored to a mesh vertex.
+
+    type: "bartack" (drawn as a thick bar, oriented toward `toward` if
+    given) or "attach" (a circle-cross target for webbing, buckles,
+    zipper stops, ...). The label is printed next to the symbol.
+    """
+
+    vertex: int
+    type: str = "attach"
+    label: str = ""
+    toward: int | None = None
+
+
 @dataclass
 class SeamSpec:
     """Parsed seam file."""
@@ -61,6 +76,12 @@ class SeamSpec:
     panels: list[PanelSpec]
     units: str = "mm"
     seam_allowance: float = 10.0
+    # Darts are slit seams: a vertex path from a boundary vertex (the dart
+    # mouth) inward to the apex. Opening the slit lets the flattening
+    # spread it into a V; the V is the dart intake. A path with both ends
+    # interior gives a fisheye dart.
+    darts: list[list[int]] = field(default_factory=list)
+    marks: list[Mark] = field(default_factory=list)
 
 
 @dataclass
@@ -72,6 +93,8 @@ class Panel:
     faces: np.ndarray  # (t, 3), panel-local indices
     orig_vertex_index: np.ndarray  # panel-local -> original mesh vertex index
     spec: PanelSpec
+    darts: list[list[int]] = field(default_factory=list)  # original indices
+    marks: list[Mark] = field(default_factory=list)
 
     def local_index(self, orig_vertex: int) -> int:
         """Translate an original-mesh vertex index to this panel's indexing."""
@@ -101,11 +124,23 @@ def spec_from_dict(data: dict) -> SeamSpec:
         )
         for p in data.get("panels", [])
     ]
+    darts = [list(map(int, dart["path"])) for dart in data.get("darts", [])]
+    marks = [
+        Mark(
+            vertex=int(m["vertex"]),
+            type=str(m.get("type", "attach")),
+            label=str(m.get("label", "")),
+            toward=int(m["toward"]) if m.get("toward") is not None else None,
+        )
+        for m in data.get("marks", [])
+    ]
     return SeamSpec(
         seams=seams,
         panels=panels,
         units=str(data.get("units", "mm")),
         seam_allowance=float(data.get("seam_allowance", 10.0)),
+        darts=darts,
+        marks=marks,
     )
 
 
@@ -146,7 +181,10 @@ def split_mesh(mesh: trimesh.Trimesh, spec: SeamSpec) -> list[Panel]:
     get an auto-generated name and default metadata.
     """
     faces = np.asarray(mesh.faces, dtype=np.int64)
-    seam_edges = _seam_edge_set(faces, spec.seams)
+    # Darts are slits: they get opened exactly like seams, but they never
+    # separate components (they end inside the surface).
+    darts = _normalized_darts(faces, spec)
+    seam_edges = _seam_edge_set(faces, spec.seams + darts)
 
     vertices, faces, orig_map = open_seams(mesh, seam_edges)
 
@@ -160,6 +198,7 @@ def split_mesh(mesh: trimesh.Trimesh, spec: SeamSpec) -> list[Panel]:
         remap[vertex_subset] = np.arange(len(vertex_subset))
 
         panel_spec = _spec_for_component(spec, labels, component)
+        panel_origs = set(orig_map[vertex_subset].tolist())
         panels.append(
             Panel(
                 name=panel_spec.name,
@@ -167,6 +206,8 @@ def split_mesh(mesh: trimesh.Trimesh, spec: SeamSpec) -> list[Panel]:
                 faces=remap[face_subset],
                 orig_vertex_index=orig_map[vertex_subset],
                 spec=panel_spec,
+                darts=[d for d in darts if set(d) <= panel_origs],
+                marks=[m for m in spec.marks if m.vertex in panel_origs],
             )
         )
     panels.sort(key=lambda p: p.name)
@@ -277,6 +318,37 @@ def _seam_edge_set(faces: np.ndarray, seams: list[list[int]]) -> set[tuple[int, 
                 )
             seam_edges.add(edge)
     return seam_edges
+
+
+def _normalized_darts(faces: np.ndarray, spec: SeamSpec) -> list[list[int]]:
+    """Validate darts and orient every path mouth-first, apex-last.
+
+    The mouth must sit on a boundary or seam vertex: a fully interior
+    slit would turn the panel into an annulus, which a conformal map
+    cannot flatten — reject it with a useful message instead of failing
+    later with a topology error.
+    """
+    if not spec.darts:
+        return []
+    from flatpack.meshutil import boundary_loops
+
+    reachable = {int(v) for loop in boundary_loops(faces) for v in loop}
+    for path in spec.seams:
+        reachable.update(int(v) for v in path)
+
+    darts = []
+    for i, dart in enumerate(spec.darts):
+        if dart[0] in reachable:
+            darts.append(list(dart))
+        elif dart[-1] in reachable:
+            darts.append(list(dart)[::-1])
+        else:
+            raise ValueError(
+                f"dart {i} must start at a boundary or seam vertex; a fully "
+                "interior (fisheye) dart cannot be flattened - extend it to "
+                "a boundary or run a seam through it"
+            )
+    return darts
 
 
 def _spec_for_component(

@@ -114,6 +114,18 @@ synthetic demo patch.
   Click a panel to name it and pick its fabric and stretch axis.
 - **Notch** mode toggles match notches on seam vertices (they end up on
   both panels that share the seam, which is what you want for alignment).
+- **Dart** mode: click the dart mouth (a boundary or seam vertex), then
+  the apex. The dart is treated as a slit; when the panel flattens, the
+  slit spreads into a V and *that opening is the dart intake* — computed
+  from the actual curvature rather than guessed. The pattern shows both
+  legs as fold/stitch lines meeting at an apex circle. Darts measurably
+  reduce distortion (there's a test asserting it), so use the fabric-fit
+  report's "worst spot" to decide where one is needed.
+- **Mark** mode: place sewing marks — **bar tacks** (click anchor, then a
+  second vertex for orientation; drawn as a thick 12 mm bar) and
+  **attachment points** (single click; drawn as a circle-cross target)
+  with labels like "shoulder strap". They print on the panels and land on
+  their own MARK/DART layers in the DXF.
 - **Grainline** mode: select a panel, click two vertices. *✕ Remove
   grainline* in the panel properties (visible once a panel is selected)
   takes it off again; without a grainline, panels are auto-aligned to
@@ -168,6 +180,17 @@ panels:
     stretch_axis_deg: 0     # stretch axis, degrees from the grainline
     grain: [3, 48]          # vertex pair defining the grainline
     notches: [18]           # boundary vertices to mark with notches
+darts:
+  - name: back_dart
+    path: [55, 40, 25]      # mouth (boundary/seam vertex) ... apex
+marks:
+  - vertex: 87
+    type: bartack           # bartack | attach
+    label: shoulder strap
+    toward: 88              # optional: bar tack orientation
+  - vertex: 120
+    type: attach
+    label: daisy chain
 ```
 
 Finding vertex indices: any mesh viewer that shows indices works
@@ -243,7 +266,10 @@ subcommands work as in the CLI.
 
 ## Limitations / next steps
 
-- Dart placement is reported, not automatically drafted into the outline.
+- Dart *placement* is manual (the report tells you where distortion is
+  worst; you choose where the dart goes). The intake geometry is computed.
+- Fisheye (fully interior) darts are rejected: a closed interior slit
+  makes the panel an annulus, which a conformal map cannot flatten.
 - Panel packing is a simple left-to-right shelf; no nesting.
 - The relaxation is a damped spring iteration, not a full ARAP solve —
   good enough to bias error into the stretch axis, not a simulation.

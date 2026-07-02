@@ -32,6 +32,10 @@ const state = {
   grainPending: null,   // first grain vertex clicked
   measureA: null,       // first ruler vertex clicked
   measureLine: null,    // completed ruler: [a, b]
+  darts: [],            // {name, path: [v, ...]} mouth -> apex
+  dartPending: null,    // dart mouth awaiting an apex click
+  marks: [],            // {vertex, type, label, toward}
+  markPending: null,    // bar tack anchor awaiting a direction click
   diag: 1,              // mesh bbox diagonal, for sizing markers
 };
 
@@ -249,6 +253,78 @@ async function handleClick({ vertex, face }) {
   if (state.mode === "notch") return toggleNotch(vertex);
   if (state.mode === "grain") return grainClick(vertex);
   if (state.mode === "measure") return measureClick(vertex);
+  if (state.mode === "dart") return dartClick(vertex);
+  if (state.mode === "mark") return markClick(vertex);
+}
+
+async function dartClick(v) {
+  if (state.dartPending === null) {
+    state.dartPending = v;
+    setStatus("dart: mouth set - now click the apex (inside the panel)");
+  } else if (v !== state.dartPending) {
+    const { path } = await api("/api/path", { start: state.dartPending, end: v });
+    state.darts.push({ name: `dart_${state.darts.length + 1}`, path });
+    state.dartPending = null;
+    renderDartMarkLists();
+    setStatus("dart added - intake is computed when you generate");
+  }
+  redrawOverlay();
+}
+
+function markClick(v) {
+  const type = document.getElementById("mark-type").value;
+  const label = document.getElementById("mark-label").value.trim();
+  if (type === "bartack") {
+    if (state.markPending === null) {
+      state.markPending = v;
+      setStatus("bar tack: anchor set - click a second vertex for direction");
+    } else if (v !== state.markPending) {
+      state.marks.push({
+        vertex: state.markPending,
+        type,
+        label: label || `bartack ${state.marks.length + 1}`,
+        toward: v,
+      });
+      state.markPending = null;
+      renderDartMarkLists();
+      setStatus("bar tack added");
+    }
+  } else {
+    state.marks.push({
+      vertex: v,
+      type,
+      label: label || `attach ${state.marks.length + 1}`,
+      toward: null,
+    });
+    renderDartMarkLists();
+    setStatus("attachment point added");
+  }
+  redrawOverlay();
+}
+
+function renderDartMarkLists() {
+  const dl = document.getElementById("dart-list");
+  dl.innerHTML = "";
+  state.darts.forEach((dart, i) => {
+    const li = document.createElement("li");
+    li.innerHTML = `<span>${dart.name} (${dart.path.length} verts)</span>`;
+    const del = document.createElement("button");
+    del.textContent = "×";
+    del.onclick = () => { state.darts.splice(i, 1); renderDartMarkLists(); redrawOverlay(); };
+    li.appendChild(del);
+    dl.appendChild(li);
+  });
+  const ml = document.getElementById("mark-list");
+  ml.innerHTML = "";
+  state.marks.forEach((mark, i) => {
+    const li = document.createElement("li");
+    li.innerHTML = `<span>${mark.type}: ${mark.label}</span>`;
+    const del = document.createElement("button");
+    del.textContent = "×";
+    del.onclick = () => { state.marks.splice(i, 1); renderDartMarkLists(); redrawOverlay(); };
+    li.appendChild(del);
+    ml.appendChild(li);
+  });
 }
 
 function measureClick(v) {
@@ -439,6 +515,11 @@ async function resetMesh() {
   state.grainPending = null;
   state.measureA = null;
   state.measureLine = null;
+  state.darts = [];
+  state.dartPending = null;
+  state.marks = [];
+  state.markPending = null;
+  renderDartMarkLists();
   updateMeasureReadout();
   applyMeshData(data.mesh);
   invalidateSplit();
@@ -473,6 +554,8 @@ function buildSpec() {
     units: "mm",
     seam_allowance: Number(document.getElementById("allowance").value) || 10,
     seams: state.seams.map(s => ({ name: s.name, path: s.legs.flat() })),
+    darts: state.darts.map(d => ({ name: d.name, path: d.path })),
+    marks: state.marks,
     panels,
   };
 }
@@ -538,6 +621,23 @@ function redrawOverlay() {
   for (const [, p] of state.panelProps) {
     if (p.grain) overlay.add(polyline(p.grain, 0x69f0ae));
   }
+  for (const dart of state.darts) overlay.add(polyline(dart.path, 0xff4081));
+  if (state.dartPending !== null) {
+    const m = marker(0xff4081);
+    placeMarker(m, state.dartPending, 0.006);
+    overlay.add(m);
+  }
+  for (const mark of state.marks) {
+    const m = marker(0xffa726);
+    placeMarker(m, mark.vertex, mark.type === "bartack" ? 0.005 : 0.008);
+    overlay.add(m);
+    if (mark.toward !== null) overlay.add(polyline([mark.vertex, mark.toward], 0xffa726));
+  }
+  if (state.markPending !== null) {
+    const m = marker(0xffa726);
+    placeMarker(m, state.markPending, 0.006);
+    overlay.add(m);
+  }
   if (state.measureA !== null) {
     const m = marker(0xffffff);
     placeMarker(m, state.measureA, 0.006);
@@ -563,6 +663,8 @@ const HINTS = {
   notch: "click a vertex to toggle a match notch",
   grain: "select a panel, then click two vertices",
   measure: "click two vertices to measure between them",
+  dart: "click the dart mouth (on a boundary or seam), then the apex",
+  mark: "attachment: one click; bar tack: click anchor, then direction",
 };
 
 function setMode(mode) {
@@ -571,6 +673,9 @@ function setMode(mode) {
   for (const b of document.querySelectorAll("button.mode"))
     b.classList.toggle("active", b.id === `mode-${mode}`);
   document.getElementById("mode-hint").textContent = HINTS[mode];
+  document.getElementById("mark-opts").classList.toggle("hidden", mode !== "mark");
+  state.dartPending = null;
+  state.markPending = null;
 }
 
 function renderSeamList() {
@@ -615,7 +720,7 @@ function setStatus(text, isError = false) {
   el.style.color = isError ? "#ff8a80" : "";
 }
 
-for (const mode of ["orbit", "seam", "notch", "grain", "measure"])
+for (const mode of ["orbit", "seam", "notch", "grain", "measure", "dart", "mark"])
   document.getElementById(`mode-${mode}`).onclick = () => setMode(mode);
 document.getElementById("show-edges").onchange = e => {
   if (wireframe) wireframe.visible = e.target.checked;
@@ -655,7 +760,7 @@ loadMesh().catch(e => setStatus(e.message, true));
 window.flatpack = {
   state, addSeamVertex, finishSeam, previewSplit, generate, saveSpec,
   selectPanel, toggleNotch, setMode, buildSpec, clearGrain, resetMesh,
-  measureClick, applyScale,
+  measureClick, applyScale, dartClick, markClick,
   setStraightCut: on => { document.getElementById("straight-cut").checked = on; },
   ready: () => !!displayMesh,
 };

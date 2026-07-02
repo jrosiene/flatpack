@@ -21,10 +21,22 @@ import ezdxf
 import numpy as np
 from shapely.geometry import Polygon
 
-from flatpack.meshutil import boundary_loops
+from flatpack.meshutil import boundary_loops, unique_edges
 from flatpack.seams import Panel
 
 SVG_NS = "http://www.w3.org/2000/svg"
+
+BARTACK_LENGTH = 12.0  # drawn size of a bar tack symbol, mm
+
+
+@dataclass
+class Mark2D:
+    """A sewing mark placed on the flattened panel."""
+
+    pos: np.ndarray  # (2,)
+    direction: np.ndarray  # (2,) unit vector (bar tack orientation)
+    type: str  # "bartack" | "attach"
+    label: str
 
 
 @dataclass
@@ -39,6 +51,8 @@ class PanelLayout:
     label: str
     label_pos: np.ndarray
     seam_allowance: float
+    darts: list[tuple[np.ndarray, np.ndarray]]  # per dart: two legs, apex first
+    marks: list[Mark2D]
 
 
 def layout_panel(
@@ -50,12 +64,14 @@ def layout_panel(
 
     Rotates the layout so the grainline (panel.spec.grain vertex pair, if
     given) points straight up, and translates it to the positive quadrant.
+    The same rigid transform is applied to every feature (boundary, darts,
+    marks) so they stay in register.
     """
     faces = np.asarray(panel.faces, dtype=np.int64)
     loop = boundary_loops(faces)[0]
-    stitch = uv[loop].astype(float)
 
-    stitch = _rotate_grain_vertical(panel, uv, stitch)
+    uv_t = uv @ _grain_rotation(panel, uv).T
+    stitch = uv_t[loop].astype(float)
 
     polygon = Polygon(stitch)
     if not polygon.is_valid:
@@ -68,11 +84,12 @@ def layout_panel(
 
     # Shift everything to the positive quadrant with a small margin.
     shift = seam_allowance + 5.0 - np.min(cut, axis=0)
+    uv_t = uv_t + shift
     stitch = stitch + shift
     cut = cut + shift
     polygon = Polygon(stitch)
 
-    notches = _notches(panel, uv, stitch, loop, shift)
+    notches = _notches(panel, stitch, loop)
 
     centroid = np.asarray(polygon.centroid.coords[0])
     height = float(np.ptp(stitch[:, 1]))
@@ -92,13 +109,13 @@ def layout_panel(
         label=label,
         label_pos=centroid + np.array([5.0, 0.0]),
         seam_allowance=seam_allowance,
+        darts=_dart_layouts(panel, uv_t),
+        marks=_mark_layouts(panel, uv_t),
     )
 
 
-def _rotate_grain_vertical(
-    panel: Panel, uv: np.ndarray, stitch: np.ndarray
-) -> np.ndarray:
-    """Rotate the boundary so the panel's grainline points +y.
+def _grain_rotation(panel: Panel, uv: np.ndarray) -> np.ndarray:
+    """2x2 rotation putting the panel's grainline along +y.
 
     Without a grainline, the flattening's orientation is arbitrary (set by
     the LSCM pins), so fall back to the boundary's principal axis: the
@@ -110,14 +127,67 @@ def _rotate_grain_vertical(
         b = uv[panel.local_index(panel.spec.grain[1])]
         direction = b - a
     else:
-        centered = stitch - stitch.mean(axis=0)
+        centered = uv - uv.mean(axis=0)
         _, _, axes = np.linalg.svd(centered, full_matrices=False)
         direction = axes[0]
     angle = np.arctan2(direction[1], direction[0])
     rot = np.pi / 2 - angle
     c, s = np.cos(rot), np.sin(rot)
-    matrix = np.array([[c, -s], [s, c]])
-    return stitch @ matrix.T
+    return np.array([[c, -s], [s, c]])
+
+
+def _dart_layouts(panel: Panel, uv_t: np.ndarray) -> list[tuple[np.ndarray, np.ndarray]]:
+    """The two legs of each dart, as point arrays from apex to mouth.
+
+    Opening the dart slit duplicated its interior vertices; the two copies
+    of each are separated in uv by the dart intake. Copies are chained
+    into legs by following actual mesh edges from the apex outward.
+    """
+    edges = {tuple(e) for e in unique_edges(np.asarray(panel.faces, dtype=np.int64))}
+
+    def connected(a: int, b: int) -> bool:
+        return (min(a, b), max(a, b)) in edges
+
+    layouts = []
+    for path in panel.darts:
+        copies = [
+            list(np.nonzero(panel.orig_vertex_index == v)[0]) for v in path
+        ]
+        if any(not c for c in copies):
+            continue  # dart not (fully) inside this panel
+        apex = copies[-1]
+        leg1, leg2 = [apex[0]], [apex[-1]]
+        for cands in reversed(copies[:-1]):
+            if len(cands) == 1:
+                leg1.append(cands[0])
+                leg2.append(cands[0])
+            elif connected(leg1[-1], cands[0]) or connected(leg2[-1], cands[1]):
+                leg1.append(cands[0])
+                leg2.append(cands[1])
+            else:
+                leg1.append(cands[1])
+                leg2.append(cands[0])
+        layouts.append((uv_t[leg1], uv_t[leg2]))
+    return layouts
+
+
+def _mark_layouts(panel: Panel, uv_t: np.ndarray) -> list[Mark2D]:
+    marks = []
+    for mark in panel.marks:
+        local = panel.local_index(mark.vertex)
+        pos = uv_t[local]
+        direction = np.array([1.0, 0.0])
+        if mark.toward is not None:
+            try:
+                d = uv_t[panel.local_index(mark.toward)] - pos
+            except KeyError:
+                d = None
+            if d is not None and np.linalg.norm(d) > 1e-9:
+                direction = d / np.linalg.norm(d)
+        marks.append(
+            Mark2D(pos=pos, direction=direction, type=mark.type, label=mark.label)
+        )
+    return marks
 
 
 def _loop_is_ccw(loop: np.ndarray) -> bool:
@@ -127,10 +197,8 @@ def _loop_is_ccw(loop: np.ndarray) -> bool:
 
 def _notches(
     panel: Panel,
-    uv: np.ndarray,
     stitch: np.ndarray,
     loop: np.ndarray,
-    shift: np.ndarray,
 ) -> list[tuple[np.ndarray, np.ndarray]]:
     """Notch ticks at the panel's marked boundary vertices.
 
@@ -174,6 +242,9 @@ def _shift_layout(layout: PanelLayout, shift: np.ndarray) -> None:
     layout.notches = [(p + shift, d) for p, d in layout.notches]
     layout.grain_arrow = (layout.grain_arrow[0] + shift, layout.grain_arrow[1] + shift)
     layout.label_pos = layout.label_pos + shift
+    layout.darts = [(a + shift, b + shift) for a, b in layout.darts]
+    for mark in layout.marks:
+        mark.pos = mark.pos + shift
 
 
 def sheet_bbox(layouts: list[PanelLayout], margin: float = 5.0) -> np.ndarray:
@@ -237,6 +308,36 @@ def _panel_group(layout: PanelLayout, h: float) -> ET.Element:
                 "stroke-width": "0.6",
             },
         )
+    for leg1, leg2 in layout.darts:
+        # Dart legs: fold/stitch lines from the mouth to the apex, plus a
+        # small circle at the apex so it survives cutting out.
+        for leg in (leg1, leg2):
+            ET.SubElement(
+                g,
+                "polyline",
+                {
+                    "points": pts(leg),
+                    "fill": "none",
+                    "stroke": "black",
+                    "stroke-width": "0.3",
+                    "stroke-dasharray": "6 2 1 2",
+                },
+            )
+        apex = leg1[0]
+        ET.SubElement(
+            g,
+            "circle",
+            {
+                "cx": f"{apex[0]:.3f}",
+                "cy": f"{h - apex[1]:.3f}",
+                "r": "1.5",
+                "fill": "none",
+                "stroke": "black",
+                "stroke-width": "0.3",
+            },
+        )
+    for mark in layout.marks:
+        g.append(_mark_svg(mark, h))
     start, end = layout.grain_arrow
     ET.SubElement(
         g,
@@ -271,6 +372,67 @@ def _panel_group(layout: PanelLayout, h: float) -> ET.Element:
     return g
 
 
+def _mark_svg(mark: Mark2D, h: float) -> ET.Element:
+    """Symbol for a sewing mark: bar tack = thick bar, attach = target."""
+    g = ET.Element("g", {"class": f"mark-{mark.type}"})
+    x, y = mark.pos
+    if mark.type == "bartack":
+        half = mark.direction * (BARTACK_LENGTH / 2)
+        a, b = mark.pos - half, mark.pos + half
+        ET.SubElement(
+            g,
+            "line",
+            {
+                "x1": f"{a[0]:.3f}",
+                "y1": f"{h - a[1]:.3f}",
+                "x2": f"{b[0]:.3f}",
+                "y2": f"{h - b[1]:.3f}",
+                "stroke": "black",
+                "stroke-width": "2.5",
+                "stroke-linecap": "butt",
+            },
+        )
+    else:
+        ET.SubElement(
+            g,
+            "circle",
+            {
+                "cx": f"{x:.3f}",
+                "cy": f"{h - y:.3f}",
+                "r": "3",
+                "fill": "none",
+                "stroke": "black",
+                "stroke-width": "0.4",
+            },
+        )
+        for dx, dy in ((4.5, 0), (0, 4.5)):
+            ET.SubElement(
+                g,
+                "line",
+                {
+                    "x1": f"{x - dx:.3f}",
+                    "y1": f"{h - (y - dy):.3f}",
+                    "x2": f"{x + dx:.3f}",
+                    "y2": f"{h - (y + dy):.3f}",
+                    "stroke": "black",
+                    "stroke-width": "0.4",
+                },
+            )
+    if mark.label:
+        text = ET.SubElement(
+            g,
+            "text",
+            {
+                "x": f"{x + 5:.3f}",
+                "y": f"{h - y - 4:.3f}",
+                "font-size": "5",
+                "font-family": "sans-serif",
+            },
+        )
+        text.text = mark.label
+    return g
+
+
 def write_svg(layouts: list[PanelLayout], path: str) -> None:
     """One SVG sheet with all panels, in real-world millimetres."""
     bbox = sheet_bbox(layouts)
@@ -299,7 +461,14 @@ def write_dxf(layouts: list[PanelLayout], path: str) -> None:
     """DXF (mm) with layers CUT, STITCH, NOTCH, ANNOT."""
     doc = ezdxf.new(setup=True)
     doc.units = ezdxf.units.MM
-    for name, color in (("CUT", 1), ("STITCH", 3), ("NOTCH", 5), ("ANNOT", 7)):
+    for name, color in (
+        ("CUT", 1),
+        ("STITCH", 3),
+        ("NOTCH", 5),
+        ("DART", 6),
+        ("MARK", 4),
+        ("ANNOT", 7),
+    ):
         doc.layers.add(name, color=color)
     msp = doc.modelspace()
 
@@ -314,6 +483,28 @@ def write_dxf(layouts: list[PanelLayout], path: str) -> None:
             a = point - outward * 2.0
             b = point + outward * (layout.seam_allowance + 2.0)
             msp.add_line(a, b, dxfattribs={"layer": "NOTCH"})
+        for leg1, leg2 in layout.darts:
+            msp.add_lwpolyline(leg1, dxfattribs={"layer": "DART"})
+            msp.add_lwpolyline(leg2, dxfattribs={"layer": "DART"})
+            msp.add_circle(tuple(leg1[0]), radius=1.5, dxfattribs={"layer": "DART"})
+        for mark in layout.marks:
+            if mark.type == "bartack":
+                half = mark.direction * (BARTACK_LENGTH / 2)
+                msp.add_line(
+                    mark.pos - half, mark.pos + half, dxfattribs={"layer": "MARK"}
+                )
+            else:
+                msp.add_circle(tuple(mark.pos), radius=3.0, dxfattribs={"layer": "MARK"})
+                msp.add_line(
+                    mark.pos - (4.5, 0), mark.pos + (4.5, 0), dxfattribs={"layer": "MARK"}
+                )
+                msp.add_line(
+                    mark.pos - (0, 4.5), mark.pos + (0, 4.5), dxfattribs={"layer": "MARK"}
+                )
+            if mark.label:
+                msp.add_text(
+                    mark.label, height=5.0, dxfattribs={"layer": "MARK"}
+                ).set_placement(tuple(mark.pos + (5.0, 4.0)))
         start, end = layout.grain_arrow
         msp.add_line(start, end, dxfattribs={"layer": "ANNOT"})
         msp.add_text(
