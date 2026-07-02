@@ -13,7 +13,7 @@ from flatpack.export import PanelLayout, layout_panel, pack_layouts, write_dxf, 
 from flatpack.fabric import FabricFit
 from flatpack.flatten import FlattenResult
 from flatpack.seams import Panel, SeamSpec, load_seam_spec, split_mesh
-from flatpack.tiling import write_tiled_svgs
+from flatpack.tiling import write_pattern_pdf, write_tiled_svgs
 
 
 @dataclass
@@ -34,10 +34,11 @@ def process(
     """Cut, flatten, check fabric fit, and write SVG/DXF plus tiled pages.
 
     Writes into outdir:
-      pattern.svg      one sheet with all panels, true scale (mm)
-      pattern.dxf      the same in DXF
-      page_A1.svg ...  tiled pages for home printing
-      report.json      distortion and fabric-fit summary per panel
+      pattern.svg        one sheet with all panels, true scale (mm)
+      pattern.dxf        the same in DXF
+      page_A1.svg ...    tiled pages for home printing
+      pattern_tiled.pdf  all tiled pages in one print-ready PDF
+      report.json        distortion and fabric-fit summary per panel
     """
     outdir = Path(outdir)
     outdir.mkdir(parents=True, exist_ok=True)
@@ -54,7 +55,8 @@ def process(
     edge_units = spec.edge_labels if spec.edge_labels in ("cm", "in") else None
     write_svg(layouts, str(outdir / "pattern.svg"), edge_units=edge_units)
     write_dxf(layouts, str(outdir / "pattern.dxf"), edge_units=edge_units)
-    write_tiled_svgs(layouts, outdir, page=page, edge_units=edge_units)
+    page_paths = write_tiled_svgs(layouts, outdir, page=page, edge_units=edge_units)
+    write_pattern_pdf(page_paths, outdir / "pattern_tiled.pdf")
 
     report = {
         r.panel.name: {

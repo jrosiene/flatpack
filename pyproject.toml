@@ -11,6 +11,9 @@ dependencies = [
     "shapely>=2.0",
     "ezdxf>=1.1",
     "pyyaml>=6.0",
+    # SVG -> print-ready PDF of the tiled pages (pure Python, has wheels).
+    "svglib>=1.5",
+    "reportlab>=4.0",
 ]
 
 [project.scripts]
@@ -21,6 +24,8 @@ dev = [
     "pytest>=8.0",
     # Reference implementation used only to cross-check our LSCM in tests.
     "libigl>=2.5",
+    # Renders the generated PDF to check page count/size/clipping.
+    "pypdfium2>=4.0",
 ]
 
 [build-system]

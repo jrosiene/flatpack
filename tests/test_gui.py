@@ -230,6 +230,42 @@ def test_reset_restores_original_mesh(fresh_server):
     assert path[0] == 0 and path[-1] == N - 1
 
 
+def test_load_seams_round_trips(fresh_server):
+    """Save a session, then load it back and confirm it is restored."""
+    base, state = fresh_server
+    center_dart = [(N // 2) * N + N // 2, (N // 2) * N + N // 2 - 1]
+    spec = {
+        "units": "mm",
+        "seam_allowance": 14,
+        "edge_labels": "cm",
+        "seams": [{"name": "center", "path": CENTER_SEAM}],
+        "marks": [{"vertex": 5, "type": "bartack", "label": "strap", "toward": 6}],
+        "panels": [{"name": "west", "anchor_face": 0, "fabric": "ultrastretch"}],
+    }
+    import yaml as _yaml
+
+    data = call(base, "/api/load", {"yaml": _yaml.safe_dump(spec)})
+    assert data["seam_allowance"] == 14
+    assert data["edge_labels"] == "cm"
+    assert data["seams"][0]["path"] == CENTER_SEAM
+    assert data["marks"][0]["label"] == "strap"
+    # The 'west' panel is mapped to whichever component its anchor face is in.
+    west = next(p for p in data["panels"] if p["name"] == "west")
+    assert west["fabric"] == "ultrastretch"
+    assert 0 <= west["label"] < data["n_panels"]
+
+
+def test_load_rejects_foreign_mesh(fresh_server):
+    base, _ = fresh_server
+    import yaml as _yaml
+
+    spec = {"seams": [{"name": "x", "path": [0, 999999]}]}
+    with pytest.raises(urllib.error.HTTPError) as err:
+        call(base, "/api/load", {"yaml": _yaml.safe_dump(spec)})
+    assert err.value.code == 400
+    assert "same model" in json.loads(err.value.read())["error"]
+
+
 def test_save_spec_round_trips(server, tmp_path):
     spec = {
         "units": "mm",

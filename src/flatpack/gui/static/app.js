@@ -736,6 +736,47 @@ async function saveSpec() {
   setStatus(`saved ${saved}`);
 }
 
+// Reload a previously saved seams.yaml onto the current mesh, restoring
+// seams, darts, marks and per-panel fabric/grain/notches. The server
+// checks the file matches this mesh and rejects it otherwise.
+async function loadSpec(yamlText) {
+  const data = await api("/api/load", { yaml: yamlText });
+
+  // Clear the current session, then rebuild it from the file.
+  state.seams = data.seams.map(s => ({ name: s.name, legs: [s.path] }));
+  state.currentLegs = [];
+  state.darts = data.darts;
+  state.marks = data.marks;
+  state.notches = new Set();
+  state.panelProps = new Map();
+  state.selectedPanel = null;
+  for (const p of data.panels) {
+    for (const v of p.notches) state.notches.add(v);
+  }
+  document.getElementById("allowance").value = data.seam_allowance;
+  document.getElementById("edge-units").value = data.edge_labels;
+
+  // Split so labels exist, then apply each panel's saved settings.
+  await previewSplit();
+  for (const p of data.panels) {
+    const props_ = props(p.label);
+    props_.name = p.name;
+    props_.fabric = p.fabric;
+    props_.stretch_axis_deg = p.stretch_axis_deg;
+    props_.grain = p.grain;
+  }
+  renderSeamList();
+  renderDartMarkLists();
+  renderPanelList();
+  redrawOverlay();
+  updateButtons();
+  await analyzeWarp();
+  setStatus(
+    `loaded ${data.seams.length} seam(s), ${data.darts.length} dart(s), `
+    + `${data.marks.length} mark(s)`
+  );
+}
+
 // ---------------------------------------------------------------------------
 // overlay drawing
 // ---------------------------------------------------------------------------
@@ -923,6 +964,15 @@ document.getElementById("undo-leg").onclick = undoLeg;
 document.getElementById("preview-split").onclick = () => previewSplit().catch(e => setStatus(e.message, true));
 document.getElementById("generate").onclick = () => generate().catch(e => setStatus(e.message, true));
 document.getElementById("save-spec").onclick = () => saveSpec().catch(e => setStatus(e.message, true));
+document.getElementById("load-spec").onclick = () => document.getElementById("load-file").click();
+document.getElementById("load-file").onchange = e => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => loadSpec(reader.result).catch(err => setStatus(err.message, true));
+  reader.readAsText(file);
+  e.target.value = "";  // allow re-loading the same file
+};
 document.getElementById("close-preview").onclick = () =>
   document.getElementById("svg-preview").classList.add("hidden");
 document.getElementById("clear-grain").onclick = clearGrain;
@@ -952,7 +1002,7 @@ window.flatpack = {
   state, addSeamVertex, finishSeam, previewSplit, generate, saveSpec,
   selectPanel, toggleNotch, setMode, buildSpec, clearGrain, resetMesh,
   measureClick, applyScale, dartClick, markClick,
-  addVertexClick, extendSeamToEdge, rescaleToMeasurement, analyzeWarp,
+  addVertexClick, extendSeamToEdge, rescaleToMeasurement, analyzeWarp, loadSpec,
   setStraightCut: on => { document.getElementById("straight-cut").checked = on; },
   cameraState: () => ({
     position: camera.position.toArray(),

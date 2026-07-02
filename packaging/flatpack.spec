@@ -10,7 +10,7 @@
 
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_submodules
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 root = Path(SPECPATH).parent  # packaging/ -> repository root
 src = root / "src"
@@ -22,13 +22,17 @@ a = Analysis(
         # server.py resolves static/ relative to its own __file__, which
         # lands in the bundle at this same relative location.
         (str(src / "flatpack" / "gui" / "static"), "flatpack/gui/static"),
-    ],
+    ]
+    # reportlab ships font/data files the PDF export needs at runtime.
+    + collect_data_files("reportlab"),
     # These libraries import parts of themselves dynamically (mesh format
-    # loaders, DXF machinery), which static analysis can miss.
+    # loaders, DXF machinery, SVG->PDF), which static analysis can miss.
     hiddenimports=(
         collect_submodules("trimesh")
         + collect_submodules("ezdxf")
         + collect_submodules("shapely")
+        + collect_submodules("reportlab")
+        + collect_submodules("svglib")
     ),
     excludes=["tkinter", "matplotlib", "IPython"],
 )

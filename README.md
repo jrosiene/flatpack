@@ -30,7 +30,8 @@ The pipeline:
    into the stretchy direction.
 5. **Output** — seam-allowance-offset outlines with notches, grainline
    arrows and labels as true-scale SVG and DXF, plus letter/A4 page tiles
-   (with overlap strips, crop marks and page labels) for home printing.
+   (with overlap strips, crop marks and page labels) for home printing,
+   bundled into one print-ready multi-page PDF (`pattern_tiled.pdf`).
 
 ## Install (from source)
 
@@ -166,7 +167,13 @@ synthetic demo patch.
   available from seam files via `edge_labels: cm|in`.
 - **Generate pattern** runs the exact same pipeline as the CLI into the
   output directory, pops up the SVG preview, and lists per-panel
-  distortion/fabric-fit numbers with download links. **Save seams.yaml**
+  distortion/fabric-fit numbers with download links — including
+  `pattern_tiled.pdf`, all the tiled home-print pages bundled into one
+  true-scale multi-page PDF.
+- **Load seams.yaml…** reloads a previously saved session onto the same
+  mesh: seams, darts, marks and every panel's fabric/grain/notches come
+  back exactly. The file is checked against the loaded mesh and rejected
+  with a clear message if it was drawn on a different model. **Save seams.yaml**
   writes the spec so the whole session is reproducible from the CLI.
 
 Everything the mouse can do is also scriptable from the browser console

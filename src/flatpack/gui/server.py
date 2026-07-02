@@ -30,6 +30,9 @@ to a small JSON API:
                                   {spec dict} -> {"report": ..., "files": [...]}
     POST /api/save                write seams.yaml next to the output (plus
                                   the cut mesh as shell_cut.obj if it was cut)
+    POST /api/load                parse a saved seams.yaml against the loaded
+                                  mesh; {"yaml": text} -> seams/darts/marks/
+                                  panels to restore, or 400 if it mismatches
     GET  /files/<name>            download generated pattern files
 
 Everything mesh-related is done server-side with the same code paths as
@@ -59,7 +62,7 @@ from flatpack.analysis import analyze
 from flatpack.cut import cut_between, insert_vertex_on_edge
 from flatpack.meshutil import boundary_loops, unique_edges
 from flatpack.pipeline import process
-from flatpack.seams import face_labels, spec_from_dict
+from flatpack.seams import face_labels, spec_from_dict, split_mesh
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -221,13 +224,74 @@ class GuiState:
         spec = spec_from_dict(spec_data)
         return {"panels": [a.as_dict() for a in analyze(self.mesh, spec)]}
 
+    def load_seams(self, yaml_text: str) -> dict:
+        """Parse a saved seams.yaml and return it ready to restore in the GUI.
+
+        Validates that the file matches the loaded mesh (all referenced
+        vertices exist and every seam/dart runs along real edges), then
+        returns the seams, darts, marks and per-panel settings keyed by the
+        panel component they land in — so the editor can rebuild the whole
+        session. Rejects a mismatched mesh with a clear message.
+        """
+        data = yaml.safe_load(yaml_text) or {}
+        spec = spec_from_dict(data)
+
+        n = len(self.mesh.vertices)
+        referenced = [v for path in spec.seams + spec.darts for v in path]
+        referenced += [m.vertex for m in spec.marks]
+        for panel in spec.panels:
+            if panel.grain:
+                referenced += list(panel.grain)
+            referenced += panel.notches
+        bad = [v for v in referenced if not 0 <= v < n]
+        if bad:
+            raise ValueError(
+                f"this seam file references vertex {bad[0]}, but the loaded "
+                f"mesh has {n} vertices - is it the same model? (load the OBJ "
+                "the seams were drawn on, e.g. shell_cut.obj if you had cut it)"
+            )
+
+        # split_mesh both validates the seam/dart edges and gives us the
+        # component label each panel's anchor face falls in.
+        panels = split_mesh(self.mesh, spec)
+        _, labels = face_labels(self.mesh, spec.seams)
+        panel_settings = []
+        for panel in spec.panels:
+            if panel.anchor_face is None or not 0 <= panel.anchor_face < len(labels):
+                continue
+            panel_settings.append(
+                {
+                    "label": int(labels[panel.anchor_face]),
+                    "name": panel.name,
+                    "fabric": panel.fabric,
+                    "stretch_axis_deg": panel.stretch_axis_deg,
+                    "grain": list(panel.grain) if panel.grain else None,
+                    "notches": list(panel.notches),
+                }
+            )
+
+        return {
+            "seams": [{"name": f"seam_{i + 1}", "path": p} for i, p in enumerate(spec.seams)],
+            "darts": [{"name": f"dart_{i + 1}", "path": p} for i, p in enumerate(spec.darts)],
+            "marks": [
+                {"vertex": m.vertex, "type": m.type, "label": m.label, "toward": m.toward}
+                for m in spec.marks
+            ],
+            "panels": panel_settings,
+            "seam_allowance": spec.seam_allowance,
+            "edge_labels": spec.edge_labels,
+            "n_panels": len(panels),
+        }
+
     def generate(self, spec_data: dict) -> dict:
         spec = spec_from_dict(spec_data)
         self.outdir.mkdir(parents=True, exist_ok=True)
         results = process(self.mesh, spec, self.outdir)
         report = json.loads((self.outdir / "report.json").read_text())
         files = sorted(
-            p.name for p in self.outdir.iterdir() if p.suffix in (".svg", ".dxf", ".json")
+            p.name
+            for p in self.outdir.iterdir()
+            if p.suffix in (".svg", ".dxf", ".pdf", ".json")
         )
         return {
             "report": report,
@@ -295,6 +359,8 @@ class GuiRequestHandler(SimpleHTTPRequestHandler):
                 payload = self.state.split_preview(body.get("seams", []))
             elif self.path == "/api/analyze":
                 payload = self.state.analyze_warp(body)
+            elif self.path == "/api/load":
+                payload = self.state.load_seams(str(body["yaml"]))
             elif self.path == "/api/generate":
                 payload = self.state.generate(body)
             elif self.path == "/api/save":
@@ -321,7 +387,13 @@ class GuiRequestHandler(SimpleHTTPRequestHandler):
             self.send_error(404, "no such generated file")
             return
         data = path.read_bytes()
-        types = {".svg": "image/svg+xml", ".dxf": "application/dxf", ".json": "application/json", ".yaml": "text/yaml"}
+        types = {
+            ".svg": "image/svg+xml",
+            ".dxf": "application/dxf",
+            ".pdf": "application/pdf",
+            ".json": "application/json",
+            ".yaml": "text/yaml",
+        }
         self.send_response(200)
         self.send_header("Content-Type", types.get(path.suffix, "application/octet-stream"))
         self.send_header("Content-Length", str(len(data)))

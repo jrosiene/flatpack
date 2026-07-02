@@ -76,7 +76,10 @@ def main(argv: list[str] | None = None) -> int:
         results = _demo(Path(args.outdir), page=args.page)
 
     _print_report(results)
-    print(f"\nwrote pattern.svg, pattern.dxf, tiled pages and report.json to {args.outdir}/")
+    print(
+        f"\nwrote pattern.svg, pattern.dxf, tiled pages, pattern_tiled.pdf "
+        f"and report.json to {args.outdir}/"
+    )
     return 0
 
 

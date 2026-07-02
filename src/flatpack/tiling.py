@@ -133,6 +133,34 @@ def write_tiled_svgs(
     return paths
 
 
+def write_pattern_pdf(page_svg_paths: list[Path], out_pdf: str | Path) -> Path:
+    """Bundle the tiled page SVGs into one print-ready multi-page PDF.
+
+    One PDF page per tile, in the same order the pages were written (row by
+    row), each sized to the printable area in real millimetres so it prints
+    at 100%. The full pattern is clipped to the page window on the canvas
+    (svglib does not clip to the SVG viewport by itself), so each page
+    shows only its own tile. Vector output — crisp at any zoom.
+    """
+    from reportlab.pdfgen import canvas  # heavy imports, kept local
+    from svglib.svglib import svg2rlg
+
+    out_pdf = Path(out_pdf)
+    pdf = canvas.Canvas(str(out_pdf))
+    for svg_path in page_svg_paths:
+        drawing = svg2rlg(str(svg_path))
+        pdf.setPageSize((drawing.width, drawing.height))
+        pdf.saveState()
+        clip = pdf.beginPath()
+        clip.rect(0, 0, drawing.width, drawing.height)
+        pdf.clipPath(clip, stroke=0, fill=0)
+        drawing.drawOn(pdf, 0, 0)
+        pdf.restoreState()
+        pdf.showPage()
+    pdf.save()
+    return out_pdf
+
+
 def _add_page_marks(svg: ET.Element, win: PageWindow, overlap: float) -> None:
     marks = ET.SubElement(svg, "g", {"id": "page-marks"})
     w, h = win.width, win.height
