@@ -56,7 +56,7 @@ def process(
     write_svg(layouts, str(outdir / "pattern.svg"), edge_units=edge_units)
     write_dxf(layouts, str(outdir / "pattern.dxf"), edge_units=edge_units)
     page_paths = write_tiled_svgs(layouts, outdir, page=page, edge_units=edge_units)
-    write_pattern_pdf(page_paths, outdir / "pattern_tiled.pdf")
+    write_pattern_pdf(page_paths, outdir / "pattern_tiled.pdf", page=page)
 
     report = {
         r.panel.name: {

@@ -30,8 +30,9 @@ def test_process_writes_valid_multipage_pdf(tmp_path):
     assert len(doc) == n_pages
 
 
-def test_pdf_pages_are_printable_size(tmp_path):
-    """Each PDF page is the printable area (page minus margins) in points."""
+def test_pdf_pages_are_full_paper_size(tmp_path):
+    """Each PDF page is the full paper size (so it prints at true scale
+    without the printer rescaling to fit a smaller page)."""
     import pypdfium2 as pdfium
 
     from flatpack.pipeline import process
@@ -43,9 +44,39 @@ def test_pdf_pages_are_printable_size(tmp_path):
 
     doc = pdfium.PdfDocument(str(tmp_path / "pattern_tiled.pdf"))
     width_pt, height_pt = doc[0].get_size()
-    # Letter (215.9 x 279.4 mm) minus 10 mm margins each side, in points.
-    assert width_pt == pytest.approx((215.9 - 20) * 72 / 25.4, abs=1.0)
-    assert height_pt == pytest.approx((279.4 - 20) * 72 / 25.4, abs=1.0)
+    # Full US Letter: 215.9 x 279.4 mm in points.
+    assert width_pt == pytest.approx(215.9 * 72 / 25.4, abs=1.0)
+    assert height_pt == pytest.approx(279.4 * 72 / 25.4, abs=1.0)
+
+
+def test_pdf_content_is_inside_the_printer_margin(tmp_path):
+    """All ink sits inside the printer margin, not in the non-printable
+    border - so nothing is clipped when printing at 100%."""
+    import numpy as np
+    import pypdfium2 as pdfium
+
+    from flatpack.pipeline import process
+    from flatpack.tiling import DEFAULT_PRINTER_MARGIN
+
+    mesh = make_sphere_patch(radius=200.0, half_width=120.0, n=25)
+    n = 25
+    spec = spec_from_dict({"seams": [{"name": "c", "path": [i * n + n // 2 for i in range(n)]}]})
+    process(mesh, spec, tmp_path, page="letter")
+
+    doc = pdfium.PdfDocument(str(tmp_path / "pattern_tiled.pdf"))
+    scale = 2.0  # render at 2 px/pt
+    margin_px = DEFAULT_PRINTER_MARGIN * 72 / 25.4 * scale
+    for page in doc:
+        arr = page.render(scale=scale).to_numpy()
+        ink = np.argwhere((arr[:, :, :3] < 100).any(axis=2))
+        if ink.size == 0:
+            continue
+        top, left = ink.min(axis=0)
+        bottom, right = ink.max(axis=0)
+        h, w = arr.shape[:2]
+        # Allow a couple of px of antialiasing slack.
+        assert left >= margin_px - 3 and top >= margin_px - 3
+        assert right <= w - margin_px + 3 and bottom <= h - margin_px + 3
 
 
 def test_pages_show_distinct_tiles(tmp_path):

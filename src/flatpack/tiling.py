@@ -1,10 +1,12 @@
 """Tile a pattern sheet across letter/A4 pages for home printing.
 
 Each page SVG has the size of the printable area (page minus printer
-margin) in real millimetres — print at 100% / "actual size". The full
-pattern is embedded in every page, shifted so that page's window shows
-through; the SVG viewport clips the rest. Pages overlap by a configurable
-glue strip and carry:
+margin) in real millimetres — print at 100% / "actual size". The bundled
+PDF (write_pattern_pdf) places each of these onto a full Letter/A4 page,
+inset by the margin, so a printer's non-printable border can't clip the
+pattern or trigger a rescale. The full pattern is embedded in every page,
+shifted so that page's window shows through; the SVG viewport clips the
+rest. Pages overlap by a configurable glue strip and carry:
 
 - a dashed glue line marking where the next page overlaps,
 - corner crop marks,
@@ -28,6 +30,13 @@ PAGE_SIZES_MM = {
     "letter": (215.9, 279.4),
     "a4": (210.0, 297.0),
 }
+
+MM_TO_PT = 72.0 / 25.4  # PDF points per millimetre
+
+# Printer non-printable border, in mm. The tiled window is the paper minus
+# this on every side, and the PDF insets the content by it so printing at
+# 100% keeps true scale without the printer clipping or rescaling.
+DEFAULT_PRINTER_MARGIN = 10.0
 
 
 @dataclass
@@ -94,7 +103,7 @@ def write_tiled_svgs(
     layouts: list[PanelLayout],
     outdir: str | Path,
     page: str = "letter",
-    printer_margin: float = 10.0,
+    printer_margin: float = DEFAULT_PRINTER_MARGIN,
     overlap: float = 15.0,
     prefix: str = "page",
     edge_units: str | None = None,
@@ -133,28 +142,43 @@ def write_tiled_svgs(
     return paths
 
 
-def write_pattern_pdf(page_svg_paths: list[Path], out_pdf: str | Path) -> Path:
+def write_pattern_pdf(
+    page_svg_paths: list[Path],
+    out_pdf: str | Path,
+    page: str = "letter",
+    printer_margin: float = DEFAULT_PRINTER_MARGIN,
+) -> Path:
     """Bundle the tiled page SVGs into one print-ready multi-page PDF.
 
-    One PDF page per tile, in the same order the pages were written (row by
-    row), each sized to the printable area in real millimetres so it prints
-    at 100%. The full pattern is clipped to the page window on the canvas
-    (svglib does not clip to the SVG viewport by itself), so each page
-    shows only its own tile. Vector output — crisp at any zoom.
+    One PDF page per tile, in the order the pages were written (row by row).
+    Each PDF page is the *full* paper size (Letter/A4), with the tile inset
+    by `printer_margin` on every side — so printing at 100% / "actual size"
+    keeps true scale and the pattern falls inside the printer's
+    non-printable border instead of being clipped or auto-rescaled to fit.
+
+    The tile content is clipped to its window on the canvas (svglib does not
+    clip to the SVG viewport by itself), so each page shows only its own
+    tile. Vector output — crisp at any zoom.
     """
     from reportlab.pdfgen import canvas  # heavy imports, kept local
     from svglib.svglib import svg2rlg
 
+    paper_w, paper_h = PAGE_SIZES_MM[page]
+    page_pt = (paper_w * MM_TO_PT, paper_h * MM_TO_PT)
+    margin_pt = printer_margin * MM_TO_PT
+
     out_pdf = Path(out_pdf)
-    pdf = canvas.Canvas(str(out_pdf))
+    pdf = canvas.Canvas(str(out_pdf), pagesize=page_pt)
     for svg_path in page_svg_paths:
         drawing = svg2rlg(str(svg_path))
-        pdf.setPageSize((drawing.width, drawing.height))
+        pdf.setPageSize(page_pt)
         pdf.saveState()
+        # Clip to the tile window (inset by the margin) so nothing spills
+        # into the border, then draw the tile there.
         clip = pdf.beginPath()
-        clip.rect(0, 0, drawing.width, drawing.height)
+        clip.rect(margin_pt, margin_pt, drawing.width, drawing.height)
         pdf.clipPath(clip, stroke=0, fill=0)
-        drawing.drawOn(pdf, 0, 0)
+        drawing.drawOn(pdf, margin_pt, margin_pt)
         pdf.restoreState()
         pdf.showPage()
     pdf.save()

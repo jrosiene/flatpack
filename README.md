@@ -31,7 +31,9 @@ The pipeline:
 5. **Output** — seam-allowance-offset outlines with notches, grainline
    arrows and labels as true-scale SVG and DXF, plus letter/A4 page tiles
    (with overlap strips, crop marks and page labels) for home printing,
-   bundled into one print-ready multi-page PDF (`pattern_tiled.pdf`).
+   bundled into one print-ready multi-page PDF (`pattern_tiled.pdf`) whose
+   pages are full Letter/A4 with the pattern inset by a printer margin, so
+   it prints at true scale without being clipped or rescaled.
 
 ## Install (from source)
 
