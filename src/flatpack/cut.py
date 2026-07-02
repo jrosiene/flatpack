@@ -39,7 +39,7 @@ class PlaneCutResult:
 
 def insert_vertex_on_edge(
     mesh: trimesh.Trimesh, face_index: int, point: np.ndarray, snap: float = 0.1
-) -> tuple[trimesh.Trimesh, int]:
+) -> tuple[trimesh.Trimesh, int, tuple[int, int] | None]:
     """Insert a vertex on the mesh edge nearest to `point` on the given face.
 
     For when there is simply no vertex where a seam needs to start or end.
@@ -49,7 +49,10 @@ def insert_vertex_on_edge(
     `snap` (fraction of edge length) of an existing vertex, that vertex is
     returned instead and the mesh is unchanged.
 
-    Returns (mesh, vertex_index); existing vertex indices are preserved.
+    Returns (mesh, vertex_index, split_edge); existing vertex indices are
+    preserved. split_edge is the (a, b) edge that was subdivided, or None
+    if the point snapped to an existing vertex (mesh unchanged) — it lets
+    the caller record the edit for later replay.
     """
     vertices = np.asarray(mesh.vertices, dtype=float)
     faces = np.asarray(mesh.faces, dtype=np.int64)
@@ -68,15 +71,16 @@ def insert_vertex_on_edge(
     _, a, b, t = best
 
     if t < snap:
-        return mesh, a
+        return mesh, a, None
     if t > 1.0 - snap:
-        return mesh, b
+        return mesh, b, None
 
     new_index = len(vertices)
     new_position = vertices[a] + t * (vertices[b] - vertices[a])
     all_vertices = np.vstack([vertices, [new_position]])
 
-    split = {(min(a, b), max(a, b)): new_index}
+    edge = (min(a, b), max(a, b))
+    split = {edge: new_index}
     face_list: list = []
     for face in faces:
         if _face_split_points(face, split):
@@ -87,7 +91,54 @@ def insert_vertex_on_edge(
     return (
         trimesh.Trimesh(vertices=all_vertices, faces=np.array(face_list), process=False),
         new_index,
+        edge,
     )
+
+
+def replay_edits(mesh: trimesh.Trimesh, edits: list[dict]) -> trimesh.Trimesh:
+    """Re-apply a recorded list of mesh edits, in order, to a fresh mesh.
+
+    Lets a saved seams file rebuild the exact working mesh (added vertices,
+    cuts, scaling) on top of the original OBJ, so seam indices line up
+    again. Each edit is one of:
+
+      {"op": "scale", "factor": f}
+      {"op": "cut", "start": i, "end": j}
+      {"op": "add_vertex", "edge": [a, b], "point": [x, y, z]}
+
+    The operations are deterministic, so replaying them reproduces the same
+    vertex numbering the original session produced.
+    """
+    for edit in edits:
+        mesh = _apply_edit(mesh, edit)
+    return mesh
+
+
+def _apply_edit(mesh: trimesh.Trimesh, edit: dict) -> trimesh.Trimesh:
+    op = edit.get("op")
+    if op == "scale":
+        factor = float(edit["factor"])
+        return trimesh.Trimesh(
+            np.asarray(mesh.vertices, dtype=float) * factor, mesh.faces, process=False
+        )
+    if op == "cut":
+        return cut_between(mesh, int(edit["start"]), int(edit["end"])).mesh
+    if op == "add_vertex":
+        a, b = (int(v) for v in edit["edge"])
+        faces = np.asarray(mesh.faces, dtype=np.int64)
+        face = next(
+            (i for i, f in enumerate(faces) if a in f and b in f), None
+        )
+        if face is None:
+            raise ValueError(
+                f"recorded edit references edge ({a}, {b}), which is not in "
+                "the mesh - the base OBJ does not match this seam file"
+            )
+        new_mesh, _, _ = insert_vertex_on_edge(
+            mesh, face, np.asarray(edit["point"], dtype=float)
+        )
+        return new_mesh
+    raise ValueError(f"unknown mesh edit op {op!r}")
 
 
 def cut_between(

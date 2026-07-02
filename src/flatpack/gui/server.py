@@ -59,7 +59,7 @@ import trimesh
 import yaml
 
 from flatpack.analysis import analyze
-from flatpack.cut import cut_between, insert_vertex_on_edge
+from flatpack.cut import cut_between, insert_vertex_on_edge, replay_edits
 from flatpack.meshutil import boundary_loops, unique_edges
 from flatpack.pipeline import process
 from flatpack.seams import face_labels, spec_from_dict, split_mesh
@@ -74,7 +74,10 @@ class GuiState:
     mesh: trimesh.Trimesh
     outdir: Path
     mesh_name: str = "mesh"
-    modified: bool = False  # True once a cut changed the geometry
+    modified: bool = False  # True once an edit changed the geometry
+    # Ordered log of mesh edits (scale/cut/add_vertex) so a saved seams
+    # file can rebuild this exact mesh on top of the original OBJ.
+    edits: list = field(default_factory=list)
     _original: trimesh.Trimesh | None = field(default=None, repr=False)
     _edge_graph: scipy.sparse.csr_matrix | None = field(default=None, repr=False)
 
@@ -144,6 +147,7 @@ class GuiState:
         result = cut_between(self.mesh, start, end)
         self.mesh = result.mesh
         self.modified = True
+        self.edits.append({"op": "cut", "start": int(start), "end": int(end)})
         self._edge_graph = None
         return {"path": result.path, "mesh": self.mesh_payload()}
 
@@ -164,14 +168,16 @@ class GuiState:
             process=False,
         )
         self.modified = True
+        self.edits.append({"op": "scale", "factor": float(factor)})
         self._edge_graph = None
         return {"mesh": self.mesh_payload()}
 
     def reset(self) -> dict:
-        """Undo all cuts: restore the mesh as loaded."""
+        """Undo all edits: restore the mesh as loaded."""
         if self._original is not None:
             self.mesh = self._original.copy()
         self.modified = False
+        self.edits = []
         self._edge_graph = None
         return {"mesh": self.mesh_payload()}
 
@@ -182,10 +188,13 @@ class GuiState:
             raise ValueError("point must be [x, y, z]")
         if self._original is None:
             self._original = self.mesh.copy()
-        mesh, vertex = insert_vertex_on_edge(self.mesh, face, np.asarray(point))
+        mesh, vertex, edge = insert_vertex_on_edge(self.mesh, face, np.asarray(point))
         if mesh is not self.mesh:
             self.mesh = mesh
             self.modified = True
+            self.edits.append(
+                {"op": "add_vertex", "edge": list(edge), "point": list(map(float, point))}
+            )
             self._edge_graph = None
         return {"vertex": int(vertex), "mesh": self.mesh_payload()}
 
@@ -224,18 +233,8 @@ class GuiState:
         spec = spec_from_dict(spec_data)
         return {"panels": [a.as_dict() for a in analyze(self.mesh, spec)]}
 
-    def load_seams(self, yaml_text: str) -> dict:
-        """Parse a saved seams.yaml and return it ready to restore in the GUI.
-
-        Validates that the file matches the loaded mesh (all referenced
-        vertices exist and every seam/dart runs along real edges), then
-        returns the seams, darts, marks and per-panel settings keyed by the
-        panel component they land in — so the editor can rebuild the whole
-        session. Rejects a mismatched mesh with a clear message.
-        """
-        data = yaml.safe_load(yaml_text) or {}
-        spec = spec_from_dict(data)
-
+    def _first_bad_index(self, spec) -> int | None:
+        """First vertex a spec references that is out of range, or None."""
         n = len(self.mesh.vertices)
         referenced = [v for path in spec.seams + spec.darts for v in path]
         referenced += [m.vertex for m in spec.marks]
@@ -243,12 +242,46 @@ class GuiState:
             if panel.grain:
                 referenced += list(panel.grain)
             referenced += panel.notches
-        bad = [v for v in referenced if not 0 <= v < n]
-        if bad:
+        return next((v for v in referenced if not 0 <= v < n), None)
+
+    def load_seams(self, yaml_text: str) -> dict:
+        """Parse a saved seams.yaml and return it ready to restore in the GUI.
+
+        If the file was saved from a session that edited the mesh (added
+        vertices, cuts, scaling), it carries a `mesh_edits` log; when the
+        current mesh doesn't already have those vertices, the edits are
+        replayed onto it so the seam indices line up again — you can reload
+        onto the original OBJ without hunting for shell_cut.obj. A file
+        that still doesn't match (wrong model) is rejected clearly.
+
+        Returns seams, darts, marks and per-panel settings (keyed by the
+        component their anchor face lands in), plus the possibly-rebuilt
+        mesh for the client to reload.
+        """
+        data = yaml.safe_load(yaml_text) or {}
+        spec = spec_from_dict(data)
+        mesh_edits = data.get("mesh_edits", []) or []
+
+        mesh_changed = False
+        if self._first_bad_index(spec) is not None and mesh_edits:
+            # Rebuild the working mesh from the original OBJ + recorded edits.
+            base = (self._original or self.mesh).copy()
+            rebuilt = replay_edits(base, mesh_edits)
+            if self._original is None:
+                self._original = self.mesh.copy()
+            self.mesh = rebuilt
+            self.edits = list(mesh_edits)
+            self.modified = True
+            self._edge_graph = None
+            mesh_changed = True
+
+        bad = self._first_bad_index(spec)
+        if bad is not None:
+            n = len(self.mesh.vertices)
             raise ValueError(
-                f"this seam file references vertex {bad[0]}, but the loaded "
-                f"mesh has {n} vertices - is it the same model? (load the OBJ "
-                "the seams were drawn on, e.g. shell_cut.obj if you had cut it)"
+                f"this seam file references vertex {bad}, but the loaded "
+                f"mesh has {n} vertices - is it the same model? (open the OBJ "
+                "the seams were drawn on)"
             )
 
         # split_mesh both validates the seam/dart edges and gives us the
@@ -281,6 +314,8 @@ class GuiState:
             "seam_allowance": spec.seam_allowance,
             "edge_labels": spec.edge_labels,
             "n_panels": len(panels),
+            "mesh": self.mesh_payload(),
+            "mesh_changed": mesh_changed,
         }
 
     def generate(self, spec_data: dict) -> dict:
@@ -302,12 +337,18 @@ class GuiState:
     def save_spec(self, spec_data: dict) -> dict:
         spec_from_dict(spec_data)  # validate before writing
         self.outdir.mkdir(parents=True, exist_ok=True)
+        payload = dict(spec_data)
+        if self.edits:
+            # Embed the mesh edits so this file can rebuild its own geometry
+            # (added vertices, cuts, scaling) when reloaded onto the original
+            # OBJ - no need to keep the cut mesh around.
+            payload["mesh_edits"] = self.edits
         path = self.outdir / "seams.yaml"
-        path.write_text(yaml.safe_dump(spec_data, sort_keys=False))
+        path.write_text(yaml.safe_dump(payload, sort_keys=False))
         saved = {"saved": str(path)}
         if self.modified:
-            # Cuts changed the geometry, so the seam file only makes sense
-            # against the cut mesh: save it alongside for CLI replay.
+            # Also drop the edited mesh next to it, for the CLI pipeline
+            # (flatpack flatten) which does not replay edits.
             mesh_path = self.outdir / "shell_cut.obj"
             self.mesh.export(str(mesh_path))
             saved["mesh"] = str(mesh_path)

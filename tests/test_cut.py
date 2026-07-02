@@ -123,9 +123,10 @@ def test_insert_vertex_mid_edge():
     face = next(
         i for i, f in enumerate(mesh.faces) if 0 in f and 1 in f
     )
-    out, vertex = insert_vertex_on_edge(mesh, face, target)
+    out, vertex, edge = insert_vertex_on_edge(mesh, face, target)
 
     assert vertex == len(mesh.vertices)  # appended
+    assert set(edge) == {0, 1}
     assert np.allclose(out.vertices[vertex], target)
     assert np.allclose(out.vertices[: len(mesh.vertices)], mesh.vertices)
     assert out.area == pytest.approx(mesh.area, rel=1e-12)
@@ -149,6 +150,7 @@ def test_insert_vertex_snaps_to_existing():
     mesh = make_plane(half_width=50.0, n=N)
     near_zero = mesh.vertices[0] + 0.02 * (mesh.vertices[1] - mesh.vertices[0])
     face = next(i for i, f in enumerate(mesh.faces) if 0 in f and 1 in f)
-    out, vertex = insert_vertex_on_edge(mesh, face, near_zero)
+    out, vertex, edge = insert_vertex_on_edge(mesh, face, near_zero)
     assert vertex == 0
     assert out is mesh  # unchanged
+    assert edge is None  # snapped, nothing subdivided

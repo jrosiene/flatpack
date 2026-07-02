@@ -172,8 +172,11 @@ synthetic demo patch.
   true-scale multi-page PDF.
 - **Load seams.yaml…** reloads a previously saved session onto the same
   mesh: seams, darts, marks and every panel's fabric/grain/notches come
-  back exactly. The file is checked against the loaded mesh and rejected
-  with a clear message if it was drawn on a different model. **Save seams.yaml**
+  back exactly. If you had edited the mesh (added vertices, straight cuts,
+  scaling), those edits are recorded in the file and **replayed
+  automatically** when you reload onto the original OBJ — so you don't
+  need to keep the cut mesh around. A file drawn on a genuinely different
+  model is still rejected with a clear message. **Save seams.yaml**
   writes the spec so the whole session is reproducible from the CLI.
 
 Everything the mouse can do is also scriptable from the browser console

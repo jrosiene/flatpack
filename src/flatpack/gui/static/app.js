@@ -742,6 +742,11 @@ async function saveSpec() {
 async function loadSpec(yamlText) {
   const data = await api("/api/load", { yaml: yamlText });
 
+  // The file may have rebuilt the mesh from recorded edits (added
+  // vertices / cuts / scaling); reload it so indices line up.
+  if (data.mesh) applyMeshData(data.mesh);
+  if (data.mesh_changed) document.getElementById("reset-mesh").classList.remove("hidden");
+
   // Clear the current session, then rebuild it from the file.
   state.seams = data.seams.map(s => ({ name: s.name, legs: [s.path] }));
   state.currentLegs = [];

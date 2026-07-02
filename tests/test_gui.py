@@ -255,6 +255,44 @@ def test_load_seams_round_trips(fresh_server):
     assert 0 <= west["label"] < data["n_panels"]
 
 
+def test_load_replays_mesh_edits_onto_original(tmp_path):
+    """A session that added a vertex saves its edits; reloading that file
+    onto the pristine OBJ rebuilds the vertex so the seam still resolves."""
+    import yaml as _yaml
+
+    from flatpack.gui.server import GuiState
+    from flatpack.synthetic import make_plane
+
+    def make_state():
+        return GuiState(mesh=make_plane(half_width=50.0, n=N), outdir=tmp_path, mesh_name="t")
+
+    # Session 1: insert a vertex mid-edge, use it in a seam, save.
+    s1 = make_state()
+    mesh = s1.mesh
+    face = next(i for i, f in enumerate(mesh.faces) if 0 in f and 1 in f)
+    mid = ((mesh.vertices[0] + mesh.vertices[1]) / 2).tolist()
+    added = s1.add_vertex(int(face), mid)
+    new_vertex = added["vertex"]
+    assert new_vertex == N * N  # appended
+    assert s1.edits and s1.edits[0]["op"] == "add_vertex"
+    spec = {
+        "seams": [{"name": "s", "path": [new_vertex, 1, 1 + N]}],
+        "panels": [],
+    }
+    saved = s1.save_spec(spec)
+    yaml_text = (tmp_path / "seams.yaml").read_text()
+    assert "mesh_edits" in _yaml.safe_load(yaml_text)
+
+    # Session 2: fresh GuiState on the ORIGINAL plane (no extra vertex).
+    s2 = make_state()
+    assert len(s2.mesh.vertices) == N * N
+    out = s2.load_seams(yaml_text)
+    # The edit was replayed: mesh now has the inserted vertex, seam resolves.
+    assert out["mesh_changed"] is True
+    assert len(s2.mesh.vertices) == N * N + 1
+    assert out["seams"][0]["path"][0] == new_vertex
+
+
 def test_load_rejects_foreign_mesh(fresh_server):
     base, _ = fresh_server
     import yaml as _yaml

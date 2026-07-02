@@ -13,6 +13,7 @@ report exactly.
 
 from __future__ import annotations
 
+import math
 from dataclasses import asdict, dataclass
 
 import numpy as np
@@ -39,14 +40,20 @@ class PanelAnalysis:
     bad_area_fraction: float  # fraction of area outside fabric tolerance
     dart_area_fraction: float  # excess material (needs a dart/gather)
     relief_area_fraction: float  # missing material (needs relief/stretch)
-    max_stretch_pct: float
-    max_compress_pct: float
-    max_angle_error_deg: float
+    max_stretch_pct: float | None
+    max_compress_pct: float | None
+    max_angle_error_deg: float | None
     worst_point_3d: list[float] | None  # mesh-space centroid of worst triangle
     advice: str
 
     def as_dict(self) -> dict:
-        return asdict(self)
+        # Non-finite floats (e.g. from a panel that can't flatten) are not
+        # valid JSON; emit null instead so the response parses in the browser.
+        out = asdict(self)
+        for key, value in out.items():
+            if isinstance(value, float) and not math.isfinite(value):
+                out[key] = None
+        return out
 
 
 def flatten_and_fit(
@@ -91,9 +98,9 @@ def analyze_panel(panel: Panel, relax: bool = True) -> PanelAnalysis:
             bad_area_fraction=1.0,
             dart_area_fraction=0.0,
             relief_area_fraction=0.0,
-            max_stretch_pct=float("nan"),
-            max_compress_pct=float("nan"),
-            max_angle_error_deg=float("nan"),
+            max_stretch_pct=None,
+            max_compress_pct=None,
+            max_angle_error_deg=None,
             worst_point_3d=None,
             advice=str(exc),
         )
