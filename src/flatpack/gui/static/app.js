@@ -71,10 +71,27 @@ controls.mouseButtons = {
   RIGHT: THREE.MOUSE.PAN,
 };
 
-scene.add(new THREE.HemisphereLight(0xffffff, 0x3a3d44, 1.1));
-const sun = new THREE.DirectionalLight(0xffffff, 1.4);
-sun.position.set(1, 2, 1.5);
-scene.add(sun);
+// Soft ambient fill plus a headlight that follows the camera (see
+// updateHeadlight), so whichever face is turned toward you is always lit
+// - the mesh material is double-sided, so this lights the inside of a
+// shell too.
+scene.add(new THREE.HemisphereLight(0xffffff, 0x3a3d44, 0.6));
+const headlight = new THREE.DirectionalLight(0xffffff, 1.25);
+scene.add(headlight);
+scene.add(headlight.target);
+
+const _lightOffset = new THREE.Vector3();
+function updateHeadlight() {
+  // Position the light behind the viewer (further from the target than
+  // the camera) and a little above, aiming at what the camera looks at.
+  _lightOffset.copy(camera.position).sub(controls.target);
+  headlight.position
+    .copy(camera.position)
+    .addScaledVector(_lightOffset, 0.3)
+    .addScaledVector(camera.up, _lightOffset.length() * 0.2);
+  headlight.target.position.copy(controls.target);
+  headlight.target.updateMatrixWorld();
+}
 
 let displayMesh = null;              // non-indexed, per-face colourable
 const overlay = new THREE.Group();   // seams, markers, notches, grain arrows
@@ -83,14 +100,22 @@ const cursor = marker(0xffe066);     // hover highlight
 cursor.visible = false;
 scene.add(cursor);
 
-function marker(color, scale = 1) {
+function marker(color) {
   const m = new THREE.Mesh(
     new THREE.SphereGeometry(1, 12, 8),
     new THREE.MeshBasicMaterial({ color, depthTest: false })
   );
   m.renderOrder = 10;
-  m.userData.baseScale = scale;
   return m;
+}
+
+// Markers are sized in screen space: world scale grows with distance from
+// the camera so a picked-vertex dot keeps a roughly constant on-screen
+// size at any zoom - fine work close up is no longer obscured by a huge
+// dot. `size` is a fraction of the viewing distance.
+function updateMarkerScale(m) {
+  if (!m.userData.markerSize) return;
+  m.scale.setScalar(camera.position.distanceTo(m.position) * m.userData.markerSize);
 }
 
 function resize() {
@@ -103,6 +128,9 @@ window.addEventListener("resize", resize);
 
 renderer.setAnimationLoop(() => {
   controls.update();
+  updateHeadlight();
+  updateMarkerScale(cursor);
+  overlay.traverse(updateMarkerScale);
   renderer.render(scene, camera);
 });
 
@@ -258,7 +286,8 @@ renderer.domElement.addEventListener("pointermove", e => {
 
 function placeMarker(m, v, size) {
   m.position.copy(vertexPos(v));
-  m.scale.setScalar(state.diag * size);
+  m.userData.markerSize = size;  // screen-space size; applied in updateMarkerScale
+  updateMarkerScale(m);
 }
 
 // ---------------------------------------------------------------------------
@@ -844,5 +873,22 @@ window.flatpack = {
     position: camera.position.toArray(),
     target: controls.target.toArray(),
   }),
+  dollyTo: dist => {
+    // Move the camera to `dist` from the target along the view direction.
+    camera.position.copy(controls.target).addScaledVector(
+      camera.position.clone().sub(controls.target).normalize(), dist);
+    controls.update();
+  },
+  markerScales: () => {
+    // [scale, screen-size ratio] per marker; the ratio (world scale over
+    // camera distance) is what stays constant across zoom.
+    const out = [];
+    overlay.traverse(m => {
+      if (m.userData.markerSize)
+        out.push([m.scale.x, m.scale.x / camera.position.distanceTo(m.position)]);
+    });
+    return out;
+  },
+  headlightPos: () => headlight.position.toArray(),
   ready: () => !!displayMesh,
 };
