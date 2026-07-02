@@ -109,6 +109,24 @@ def test_dxf_round_trips(layout_and_panel, tmp_path):
     assert cut_polys[0].closed
 
 
+def test_no_grain_layout_is_upright():
+    """Without a grainline the panel aligns to its principal axis, so a
+    rectangular panel (unrolled tube) sits square to the page."""
+    from flatpack.synthetic import make_open_tube
+    from flatpack.seams import spec_from_dict, split_mesh
+
+    tube = make_open_tube(radius=80.0, height=300.0, n_around=24, n_height=9)
+    spec = spec_from_dict({"seams": [{"name": "side", "path": list(range(9))}]})
+    panel = split_mesh(tube, spec)[0]
+    result = flatten(trimesh.Trimesh(panel.vertices, panel.faces, process=False))
+    layout = layout_panel(panel, result.uv)
+
+    bbox_area = np.ptp(layout.stitch[:, 0]) * np.ptp(layout.stitch[:, 1])
+    assert bbox_area == pytest.approx(Polygon(layout.stitch).area, rel=0.02)
+    # Long side (circumference ~503) is vertical.
+    assert np.ptp(layout.stitch[:, 1]) > np.ptp(layout.stitch[:, 0])
+
+
 def test_pack_layouts_separates_panels():
     n = 15
     mesh = make_sphere_patch(radius=150.0, half_width=80.0, n=n)

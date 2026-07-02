@@ -29,7 +29,12 @@ import scipy.sparse.linalg
 import trimesh
 
 from flatpack.distortion import DistortionReport, distortion_report
-from flatpack.meshutil import boundary_loops, farthest_pair, triangle_frames
+from flatpack.meshutil import (
+    boundary_loops,
+    farthest_pair,
+    triangle_frames,
+    unique_edges,
+)
 
 
 @dataclass
@@ -60,6 +65,7 @@ def lscm(
     faces = np.asarray(faces, dtype=np.int64)
     n = len(vertices)
 
+    require_disk(vertices, faces)
     if pins is None:
         pins = default_pins(vertices, faces)
     pin_a, pin_b = pins
@@ -123,6 +129,31 @@ def lscm(
     scale = np.sqrt(area.sum() / uv_signed.sum())
     center = uv.mean(axis=0)
     return (uv - center) * scale + center
+
+
+def require_disk(vertices: np.ndarray, faces: np.ndarray) -> None:
+    """Reject patches that cannot flatten because of their topology.
+
+    A conformal map to the plane needs disk topology: Euler characteristic
+    V - E + F == 1. A closed surface (sphere-like shell, chi == 2) or a
+    tube that still wraps around (chi == 0, e.g. a pack body whose seam
+    didn't open it) would flatten to overlapping garbage; better to say
+    why up front.
+    """
+    used = np.unique(faces)
+    chi = len(used) - len(unique_edges(faces)) + len(faces)
+    if chi == 1:
+        return
+    if not boundary_loops(faces):
+        raise ValueError(
+            "patch is a closed surface; cut it with seams before flattening"
+        )
+    raise ValueError(
+        f"panel is not a flattenable patch (Euler characteristic {chi}, "
+        "expected 1): it still wraps around like a tube or has a hole. "
+        "Add a seam connecting its boundaries (e.g. one seam up the side "
+        "of a pack body)."
+    )
 
 
 def default_pins(vertices: np.ndarray, faces: np.ndarray) -> tuple[int, int]:

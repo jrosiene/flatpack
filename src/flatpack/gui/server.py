@@ -11,6 +11,8 @@ to a small JSON API:
                                   vertices (inserts vertices, retriangulates);
                                   {"start": int, "end": int} -> {"path": [...],
                                   "mesh": {...}} with the updated mesh
+    POST /api/scale               scale the whole mesh (fix unit problems)
+                                  {"factor": float} -> {"mesh": {...}}
     POST /api/reset               restore the mesh as originally loaded
     POST /api/split               preview panel components for seam paths
                                   {"seams": [[...], ...]} -> {"labels": [...], ...}
@@ -131,6 +133,26 @@ class GuiState:
         self._edge_graph = None
         return {"path": result.path, "mesh": self.mesh_payload()}
 
+    def scale(self, factor: float) -> dict:
+        """Uniformly scale the mesh, e.g. x25.4 for a shell modelled in
+        inches or x1000 for metres. Everything downstream expects mm.
+
+        Indices are untouched, so existing seams/notches/grainlines stay
+        valid; the client just reloads positions.
+        """
+        if not np.isfinite(factor) or factor <= 0:
+            raise ValueError("scale factor must be a positive number")
+        if self._original is None:
+            self._original = self.mesh.copy()
+        self.mesh = trimesh.Trimesh(
+            np.asarray(self.mesh.vertices, dtype=float) * factor,
+            self.mesh.faces,
+            process=False,
+        )
+        self.modified = True
+        self._edge_graph = None
+        return {"mesh": self.mesh_payload()}
+
     def reset(self) -> dict:
         """Undo all cuts: restore the mesh as loaded."""
         if self._original is not None:
@@ -203,6 +225,8 @@ class GuiRequestHandler(SimpleHTTPRequestHandler):
                 }
             elif self.path == "/api/cut":
                 payload = self.state.cut(int(body["start"]), int(body["end"]))
+            elif self.path == "/api/scale":
+                payload = self.state.scale(float(body["factor"]))
             elif self.path == "/api/reset":
                 payload = self.state.reset()
             elif self.path == "/api/split":

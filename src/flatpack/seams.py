@@ -28,6 +28,7 @@ after splitting.
 
 from __future__ import annotations
 
+from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -135,33 +136,129 @@ def face_labels(mesh: trimesh.Trimesh, seams: list[list[int]]) -> tuple[int, np.
 def split_mesh(mesh: trimesh.Trimesh, spec: SeamSpec) -> list[Panel]:
     """Cut the mesh along the seam paths and return one Panel per component.
 
+    The seams are genuinely *opened*: vertices along them are duplicated so
+    each side keeps its own copy and the seam becomes boundary. This matters
+    for seams that do not separate the surface — a single seam up the side
+    of a tube-shaped pack body yields one panel that unrolls flat, instead
+    of a panel that is still topologically a closed tube.
+
     Components containing a panel spec's anchor_face get that spec; others
     get an auto-generated name and default metadata.
     """
     faces = np.asarray(mesh.faces, dtype=np.int64)
-    vertices = np.asarray(mesh.vertices, dtype=float)
+    seam_edges = _seam_edge_set(faces, spec.seams)
+
+    vertices, faces, orig_map = open_seams(mesh, seam_edges)
 
     n_components, labels = face_labels(mesh, spec.seams)
 
     panels = []
     for component in range(n_components):
         face_subset = faces[labels == component]
-        orig_vertex_index = np.unique(face_subset)
+        vertex_subset = np.unique(face_subset)
         remap = np.full(len(vertices), -1, dtype=np.int64)
-        remap[orig_vertex_index] = np.arange(len(orig_vertex_index))
+        remap[vertex_subset] = np.arange(len(vertex_subset))
 
         panel_spec = _spec_for_component(spec, labels, component)
         panels.append(
             Panel(
                 name=panel_spec.name,
-                vertices=vertices[orig_vertex_index],
+                vertices=vertices[vertex_subset],
                 faces=remap[face_subset],
-                orig_vertex_index=orig_vertex_index,
+                orig_vertex_index=orig_map[vertex_subset],
                 spec=panel_spec,
             )
         )
     panels.sort(key=lambda p: p.name)
     return panels
+
+
+def open_seams(
+    mesh: trimesh.Trimesh, seam_edges: set[tuple[int, int]]
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Duplicate vertices along seam edges so the surface is actually cut.
+
+    Around each vertex touched by a seam, the incident faces are grouped
+    into wedges separated by seam edges; every wedge beyond the first gets
+    its own copy of the vertex. After this, faces on opposite sides of a
+    seam share no vertices, so the seam is real boundary. Seam endpoints
+    interior to the surface keep a single vertex (the cut just stops
+    there, like scissors partway into a sheet).
+
+    Returns (vertices, faces, orig_map) where orig_map[i] is the original
+    index each (possibly duplicated) vertex came from. Original vertices
+    keep their indices; copies are appended.
+    """
+    vertices = np.asarray(mesh.vertices, dtype=float)
+    faces = np.asarray(mesh.faces, dtype=np.int64).copy()
+    orig_map = list(range(len(vertices)))
+    new_positions: list[np.ndarray] = []
+
+    incident: dict[int, list[int]] = defaultdict(list)
+    for fi, face in enumerate(np.asarray(mesh.faces, dtype=np.int64)):
+        for v in face:
+            incident[int(v)].append(fi)
+
+    seam_vertices = sorted({v for edge in seam_edges for v in edge})
+    for v in seam_vertices:
+        wedges = _wedges_around(v, incident[v], faces, orig_map, seam_edges)
+        for wedge in wedges[1:]:
+            copy = len(vertices) + len(new_positions)
+            new_positions.append(vertices[v])
+            orig_map.append(v)
+            for fi in wedge:
+                faces[fi][faces[fi] == v] = copy
+
+    if new_positions:
+        vertices = np.vstack([vertices, new_positions])
+    return vertices, faces, np.array(orig_map, dtype=np.int64)
+
+
+def _wedges_around(
+    v: int,
+    face_indices: list[int],
+    faces: np.ndarray,
+    orig_map: list[int],
+    seam_edges: set[tuple[int, int]],
+) -> list[list[int]]:
+    """Group the faces around vertex v into components separated by seams.
+
+    Two faces are in the same wedge when they share a non-seam edge at v.
+    Edges are matched by current vertex ids (duplicates made at other seam
+    vertices split the fan exactly where they should) but tested against
+    the seam set by original ids.
+    """
+    by_edge: dict[int, list[int]] = defaultdict(list)
+    for fi in face_indices:
+        for u in faces[fi]:
+            u = int(u)
+            if u == v:
+                continue
+            a, b = sorted((v, orig_map[u]))
+            if (a, b) in seam_edges:
+                continue
+            by_edge[u].append(fi)
+
+    neighbours: dict[int, set[int]] = defaultdict(set)
+    for shared in by_edge.values():
+        for a in shared:
+            for b in shared:
+                neighbours[a].add(b)
+
+    wedges = []
+    remaining = set(face_indices)
+    while remaining:
+        seed = remaining.pop()
+        wedge = [seed]
+        queue = [seed]
+        while queue:
+            for other in neighbours[queue.pop()]:
+                if other in remaining:
+                    remaining.remove(other)
+                    wedge.append(other)
+                    queue.append(other)
+        wedges.append(wedge)
+    return wedges
 
 
 def _seam_edge_set(faces: np.ndarray, seams: list[list[int]]) -> set[tuple[int, int]]:

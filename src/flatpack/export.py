@@ -98,12 +98,21 @@ def layout_panel(
 def _rotate_grain_vertical(
     panel: Panel, uv: np.ndarray, stitch: np.ndarray
 ) -> np.ndarray:
-    """Rotate the boundary so the panel's grainline points +y."""
-    if panel.spec.grain is None:
-        return stitch
-    a = uv[panel.local_index(panel.spec.grain[0])]
-    b = uv[panel.local_index(panel.spec.grain[1])]
-    direction = b - a
+    """Rotate the boundary so the panel's grainline points +y.
+
+    Without a grainline, the flattening's orientation is arbitrary (set by
+    the LSCM pins), so fall back to the boundary's principal axis: the
+    panel comes out upright instead of tilted, which also tiles onto fewer
+    pages.
+    """
+    if panel.spec.grain is not None:
+        a = uv[panel.local_index(panel.spec.grain[0])]
+        b = uv[panel.local_index(panel.spec.grain[1])]
+        direction = b - a
+    else:
+        centered = stitch - stitch.mean(axis=0)
+        _, _, axes = np.linalg.svd(centered, full_matrices=False)
+        direction = axes[0]
     angle = np.arctan2(direction[1], direction[0])
     rot = np.pi / 2 - angle
     c, s = np.cos(rot), np.sin(rot)

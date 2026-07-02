@@ -153,6 +153,27 @@ def test_cut_then_generate_end_to_end(fresh_server):
     assert saved["mesh"].endswith("shell_cut.obj")
 
 
+def test_scale_multiplies_coordinates(fresh_server):
+    base, state = fresh_server
+    before = call(base, "/api/mesh")["vertices"]
+    data = call(base, "/api/scale", {"factor": 25.4})
+    after = data["mesh"]["vertices"]
+    assert after[0] == pytest.approx(before[0] * 25.4)
+    assert len(after) == len(before)
+    assert state.modified
+
+    # Reset undoes the scaling too.
+    restored = call(base, "/api/reset", {})["mesh"]["vertices"]
+    assert restored[0] == pytest.approx(before[0])
+
+
+def test_scale_rejects_nonsense(fresh_server):
+    base, _ = fresh_server
+    with pytest.raises(urllib.error.HTTPError) as err:
+        call(base, "/api/scale", {"factor": -2})
+    assert err.value.code == 400
+
+
 def test_reset_restores_original_mesh(fresh_server):
     base, state = fresh_server
     call(base, "/api/cut", {"start": N - 1, "end": (N - 1) * N})

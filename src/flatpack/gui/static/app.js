@@ -30,6 +30,8 @@ const state = {
   panelProps: new Map(),// label -> {name, fabric, stretch_axis_deg, grain}
   selectedPanel: null,  // label
   grainPending: null,   // first grain vertex clicked
+  measureA: null,       // first ruler vertex clicked
+  measureLine: null,    // completed ruler: [a, b]
   diag: 1,              // mesh bbox diagonal, for sizing markers
 };
 
@@ -148,8 +150,9 @@ function applyMeshData(data, { fitCamera = false } = {}) {
   );
   wireframe = new THREE.LineSegments(
     new THREE.WireframeGeometry(geo),
-    new THREE.LineBasicMaterial({ color: 0x50545a, transparent: true, opacity: 0.15 })
+    new THREE.LineBasicMaterial({ color: 0x23262b, transparent: true, opacity: 0.55 })
   );
+  wireframe.visible = document.getElementById("show-edges").checked;
   scene.add(displayMesh, wireframe);
 
   geo.computeBoundingSphere();
@@ -165,6 +168,25 @@ function applyMeshData(data, { fitCamera = false } = {}) {
 
   document.getElementById("mesh-info").textContent =
     `${data.name}: ${state.positions.length / 3} vertices, ${t} faces`;
+  updateMeshDims();
+}
+
+function updateMeshDims() {
+  const p = state.positions;
+  const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+  for (let i = 0; i < p.length; i += 3)
+    for (let k = 0; k < 3; k++) {
+      if (p[i + k] < lo[k]) lo[k] = p[i + k];
+      if (p[i + k] > hi[k]) hi[k] = p[i + k];
+    }
+  const dims = hi.map((h, k) => h - lo[k]);
+  const el = document.getElementById("mesh-dims");
+  el.innerHTML = `size: ${dims.map(d => d.toFixed(d < 10 ? 1 : 0)).join(" × ")} mm`;
+  const largest = Math.max(...dims);
+  if (largest < 100) {
+    el.innerHTML += ` <span class="warn">— suspiciously small for a pack:
+      check units and use Scale ×</span>`;
+  }
 }
 
 function vertexPos(v) {
@@ -226,6 +248,42 @@ async function handleClick({ vertex, face }) {
   if (state.mode === "seam") return addSeamVertex(vertex);
   if (state.mode === "notch") return toggleNotch(vertex);
   if (state.mode === "grain") return grainClick(vertex);
+  if (state.mode === "measure") return measureClick(vertex);
+}
+
+function measureClick(v) {
+  if (state.measureA === null || state.measureLine) {
+    state.measureA = v;
+    state.measureLine = null;
+  } else if (v !== state.measureA) {
+    state.measureLine = [state.measureA, v];
+    state.measureA = null;
+  }
+  redrawOverlay();
+  updateMeasureReadout();
+}
+
+function updateMeasureReadout() {
+  const el = document.getElementById("measure-out");
+  if (state.measureLine) {
+    const [a, b] = state.measureLine;
+    const d = vertexPos(a).distanceTo(vertexPos(b));
+    el.textContent = `ruler: ${d.toFixed(1)} mm (straight line)`;
+  } else if (state.measureA !== null) {
+    el.textContent = "ruler: click the second point…";
+  } else {
+    el.textContent = "";
+  }
+}
+
+async function applyScale(factor) {
+  const data = await api("/api/scale", { factor });
+  applyMeshData(data.mesh, { fitCamera: true });
+  document.getElementById("reset-mesh").classList.remove("hidden");
+  redrawOverlay();
+  if (state.labels) paintFaces();
+  updateMeasureReadout();
+  setStatus(`mesh scaled ×${factor}`);
 }
 
 async function addSeamVertex(v) {
@@ -379,6 +437,9 @@ async function resetMesh() {
   state.notches.clear();
   state.panelProps.clear();
   state.grainPending = null;
+  state.measureA = null;
+  state.measureLine = null;
+  updateMeasureReadout();
   applyMeshData(data.mesh);
   invalidateSplit();
   renderSeamList();
@@ -477,6 +538,19 @@ function redrawOverlay() {
   for (const [, p] of state.panelProps) {
     if (p.grain) overlay.add(polyline(p.grain, 0x69f0ae));
   }
+  if (state.measureA !== null) {
+    const m = marker(0xffffff);
+    placeMarker(m, state.measureA, 0.006);
+    overlay.add(m);
+  }
+  if (state.measureLine) {
+    overlay.add(polyline(state.measureLine, 0xffffff));
+    for (const v of state.measureLine) {
+      const m = marker(0xffffff);
+      placeMarker(m, v, 0.006);
+      overlay.add(m);
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -488,6 +562,7 @@ const HINTS = {
   seam: "click vertices; seam follows the surface between clicks",
   notch: "click a vertex to toggle a match notch",
   grain: "select a panel, then click two vertices",
+  measure: "click two vertices to measure between them",
 };
 
 function setMode(mode) {
@@ -540,8 +615,20 @@ function setStatus(text, isError = false) {
   el.style.color = isError ? "#ff8a80" : "";
 }
 
-for (const mode of ["orbit", "seam", "notch", "grain"])
+for (const mode of ["orbit", "seam", "notch", "grain", "measure"])
   document.getElementById(`mode-${mode}`).onclick = () => setMode(mode);
+document.getElementById("show-edges").onchange = e => {
+  if (wireframe) wireframe.visible = e.target.checked;
+};
+document.getElementById("apply-scale").onclick = () => {
+  const factor = Number(document.getElementById("scale-factor").value);
+  applyScale(factor).catch(e => setStatus(e.message, true));
+};
+for (const b of document.querySelectorAll(".preset-scale"))
+  b.onclick = () => {
+    document.getElementById("scale-factor").value = b.dataset.f;
+    applyScale(Number(b.dataset.f)).catch(e => setStatus(e.message, true));
+  };
 document.getElementById("finish-seam").onclick = finishSeam;
 document.getElementById("undo-leg").onclick = undoLeg;
 document.getElementById("preview-split").onclick = () => previewSplit().catch(e => setStatus(e.message, true));
@@ -568,6 +655,7 @@ loadMesh().catch(e => setStatus(e.message, true));
 window.flatpack = {
   state, addSeamVertex, finishSeam, previewSplit, generate, saveSpec,
   selectPanel, toggleNotch, setMode, buildSpec, clearGrain, resetMesh,
+  measureClick, applyScale,
   setStraightCut: on => { document.getElementById("straight-cut").checked = on; },
   ready: () => !!displayMesh,
 };

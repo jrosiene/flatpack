@@ -73,6 +73,37 @@ def make_sphere_patch(
     return _grid_mesh(x, y, z)
 
 
+def make_open_tube(
+    radius: float = 80.0, height: float = 300.0, n_around: int = 24, n_height: int = 9
+) -> trimesh.Trimesh:
+    """Open-ended cylinder, like the main body of a backpack.
+
+    Both ends are open (two boundary loops); the surface wraps around, so
+    it needs one seam from end to end before it can flatten. Vertex index
+    = ring * n_height + level, so a seam up one side is
+    [j for j in range(n_height)].
+    """
+    theta = np.linspace(0.0, 2.0 * np.pi, n_around, endpoint=False)
+    z = np.linspace(0.0, height, n_height)
+    vertices = np.array(
+        [
+            [radius * np.cos(t), radius * np.sin(t), zz]
+            for t in theta
+            for zz in z
+        ]
+    )
+    faces = []
+    for i in range(n_around):
+        i2 = (i + 1) % n_around
+        for j in range(n_height - 1):
+            a = i * n_height + j
+            b = i2 * n_height + j
+            c = i * n_height + j + 1
+            d = i2 * n_height + j + 1
+            faces.extend([[a, b, d], [a, d, c]])
+    return trimesh.Trimesh(vertices=vertices, faces=np.array(faces), process=False)
+
+
 def make_saddle_patch(
     half_width: float = 60.0, curvature: float = 0.005, n: int = 21
 ) -> trimesh.Trimesh:

@@ -15,7 +15,18 @@
 <aside id="sidebar">
   <h1>flatpack</h1>
   <div id="mesh-info" class="muted">loading mesh…</div>
-  <button id="reset-mesh" class="hidden" title="Undo all straight cuts and restore the original mesh">Reset cuts</button>
+  <div id="mesh-dims" class="muted"></div>
+  <label class="check"><input type="checkbox" id="show-edges" checked> show mesh edges</label>
+  <div class="row">
+    <button id="apply-scale" title="Multiply all mesh coordinates — use when the mesh imported in the wrong units (everything downstream expects millimetres)">Scale ×</button>
+    <input id="scale-factor" type="number" value="25.4" step="any">
+  </div>
+  <div class="row">
+    <button class="preset-scale" data-f="25.4" title="inches to mm">in→mm</button>
+    <button class="preset-scale" data-f="10" title="centimetres to mm">cm→mm</button>
+    <button class="preset-scale" data-f="1000" title="metres to mm">m→mm</button>
+  </div>
+  <button id="reset-mesh" class="hidden" title="Undo all edits (cuts and scaling) and restore the original mesh">Reset mesh edits</button>
 
   <section>
     <h2>Mode</h2>
@@ -24,8 +35,10 @@
       <button id="mode-seam" class="mode" title="Click vertices; the seam follows the surface between clicks">Draw seam</button>
       <button id="mode-notch" class="mode" title="Click a vertex to add a match notch">Notch</button>
       <button id="mode-grain" class="mode" title="Click two vertices to set the selected panel's grainline">Grainline</button>
+      <button id="mode-measure" class="mode" title="Click two vertices to measure the straight-line distance in mm">Measure</button>
     </div>
     <div id="mode-hint" class="muted"></div>
+    <div id="measure-out" class="muted"></div>
   </section>
 
   <section>
@@ -55,7 +68,7 @@
       <label>Stretch axis (° from grain) <input id="panel-axis" type="number" value="0" step="5"></label>
       <div class="row">
         <span class="muted" id="panel-extra"></span>
-        <button id="clear-grain" disabled>Clear grainline</button>
+        <button id="clear-grain" class="danger" disabled>✕ Remove grainline</button>
       </div>
     </div>
   </section>

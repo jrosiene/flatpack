@@ -17,7 +17,11 @@ The pipeline:
    millimetres. Parametric CadQuery/OpenSCAD surfaces enter by tessellating
    to a mesh first.
 2. **Seams** — you cut the shell into panels by listing vertex paths in a
-   small YAML file (see below). No automatic seam-finding.
+   small YAML file (see below). No automatic seam-finding. Seams are
+   genuinely opened (vertices duplicated along the cut), so open-ended
+   shells work: one seam up the side of a tube-shaped pack body unrolls
+   it into a single flat panel. Panels that still wrap around are
+   rejected with a message saying which seam is missing.
 3. **Flattening** — each panel is flattened with a Least Squares Conformal
    Map (LSCM, implemented from scratch in ~100 lines of numpy/scipy and
    validated against libigl in the test suite). Per-triangle area and angle
@@ -110,8 +114,18 @@ synthetic demo patch.
   Click a panel to name it and pick its fabric and stretch axis.
 - **Notch** mode toggles match notches on seam vertices (they end up on
   both panels that share the seam, which is what you want for alignment).
-- **Grainline** mode: select a panel, click two vertices. *Clear
-  grainline* in the panel properties removes it again.
+- **Grainline** mode: select a panel, click two vertices. *✕ Remove
+  grainline* in the panel properties (visible once a panel is selected)
+  takes it off again; without a grainline, panels are auto-aligned to
+  their principal axis for layout.
+- **Measure** mode: click two vertices to read the straight-line
+  distance in mm — a quick sanity check that the mesh imported at the
+  size you expected.
+- **Units**: the header shows the mesh's bounding-box size and warns when
+  it looks too small to be a pack. The *Scale ×* control (with in→mm,
+  cm→mm, m→mm presets) rescales the mesh in place — everything downstream
+  assumes millimetres. Seams, notches and grainlines survive scaling;
+  *Reset mesh edits* restores the original.
 - **Generate pattern** runs the exact same pipeline as the CLI into the
   output directory, pops up the SVG preview, and lists per-panel
   distortion/fabric-fit numbers with download links. **Save seams.yaml**
