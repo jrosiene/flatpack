@@ -42,9 +42,15 @@
       <button id="mode-measure" class="mode" title="Click two vertices to measure the straight-line distance in mm">Measure</button>
       <button id="mode-dart" class="mode" title="Click a boundary/seam vertex (dart mouth), then the apex; the flattener computes the intake">Dart</button>
       <button id="mode-mark" class="mode" title="Place sewing marks: bar tacks, attachment points">Mark</button>
+      <button id="mode-addv" class="mode" title="Click the mesh to insert a new vertex on the nearest edge — for seams that need to reach a spot with no vertex">Add vertex</button>
     </div>
     <div id="mode-hint" class="muted"></div>
     <div id="measure-out" class="muted"></div>
+    <div id="measure-rescale" class="row hidden">
+      <span class="muted">is really</span>
+      <input id="measure-target" type="number" step="any" placeholder="mm">
+      <button id="measure-apply" title="Rescale the whole mesh so the measured span becomes this length">Rescale</button>
+    </div>
     <div id="mark-opts" class="hidden">
       <label>Mark type
         <select id="mark-type">
@@ -65,6 +71,7 @@
     <div class="row">
       <button id="finish-seam" disabled>Finish seam</button>
       <button id="undo-leg" disabled>Undo leg</button>
+      <button id="to-edge" disabled title="Extend the current seam along the surface to the nearest mesh boundary">To edge</button>
     </div>
   </section>
 

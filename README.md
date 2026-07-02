@@ -100,10 +100,18 @@ synthetic demo patch.
   viewport): middle-drag pans, Shift+middle-drag orbits, wheel zooms —
   in every mode, so you can orbit while drawing a seam. In Orbit mode,
   plain left-drag also orbits (for trackpads without a middle button).
+  The orbit turntable spins around the mesh's vertical (Z) axis.
 - **Draw seam** mode: click vertices on the mesh; between clicks the seam
   snaps to the shortest path along the surface (server-side Dijkstra), so
   a seam across the whole shell takes a handful of clicks. *Finish seam*
   commits it; *Undo leg* steps back one click.
+- **To edge** (in the Seams section): extends the seam you're drawing
+  along the surface to the nearest mesh boundary — no hunting for the
+  right boundary vertex.
+- **Add vertex** mode: when a seam needs to start or end where the mesh
+  simply has no vertex, click there — a new vertex is inserted on the
+  nearest edge (both adjacent faces are retriangulated) and can be used
+  in seams, darts, notches and marks immediately.
 - **Straight cut** (checkbox in the Seams section): instead of following
   existing mesh edges, the seam cuts straight across triangles — for
   diagonal seams the triangulation doesn't line up with. The mesh is
@@ -134,7 +142,10 @@ synthetic demo patch.
   their principal axis for layout.
 - **Measure** mode: click two vertices to read the straight-line
   distance in mm — a quick sanity check that the mesh imported at the
-  size you expected.
+  size you expected. After measuring, type the length that span *should*
+  be and hit *Rescale*: the whole mesh is scaled so the measurement
+  matches (the precise way to fix units when you know one real
+  dimension, e.g. "this back panel is 500 mm tall").
 - **Units**: the header shows the mesh's bounding-box size and warns when
   it looks too small to be a pack. The *Scale ×* control (with in→mm,
   cm→mm, m→mm presets) rescales the mesh in place — everything downstream

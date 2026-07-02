@@ -54,6 +54,9 @@ viewport.appendChild(renderer.domElement);
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x24262b);
 const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 1e6);
+// Pack shells are modelled Z-up; make the orbit turntable spin around Z
+// (three.js defaults to Y-up, which makes orbiting feel axis-locked).
+camera.up.set(0, 0, 1);
 const controls = new OrbitControls(camera, renderer.domElement);
 
 // Fusion 360 navigation: middle-drag pans, Shift+middle-drag orbits,
@@ -231,7 +234,7 @@ function pickVertex(clientX, clientY) {
     const d = vertexPos(v).distanceTo(hit.point);
     if (d < bestD) { bestD = d; best = v; }
   }
-  return { vertex: best, face: hit.faceIndex };
+  return { vertex: best, face: hit.faceIndex, point: hit.point.toArray() };
 }
 
 let downAt = null;
@@ -262,13 +265,45 @@ function placeMarker(m, v, size) {
 // click handling per mode
 // ---------------------------------------------------------------------------
 
-async function handleClick({ vertex, face }) {
+async function handleClick({ vertex, face, point }) {
   if (state.mode === "seam") return addSeamVertex(vertex);
   if (state.mode === "notch") return toggleNotch(vertex);
   if (state.mode === "grain") return grainClick(vertex);
   if (state.mode === "measure") return measureClick(vertex);
   if (state.mode === "dart") return dartClick(vertex);
   if (state.mode === "mark") return markClick(vertex);
+  if (state.mode === "addv") return addVertexClick(face, point);
+}
+
+async function addVertexClick(face, point) {
+  // Insert a vertex on the edge nearest the click, for seams that need
+  // to reach a spot where no vertex exists.
+  const data = await api("/api/add_vertex", { face, point });
+  applyMeshData(data.mesh);
+  document.getElementById("reset-mesh").classList.remove("hidden");
+  invalidateSplit();
+  redrawOverlay();
+  placeMarker(cursor, data.vertex, 0.008);
+  cursor.visible = true;
+  setStatus(`vertex ${data.vertex} added (snapped to the nearest edge)`);
+}
+
+async function extendSeamToEdge() {
+  const last = lastSeamVertex();
+  if (last === null) {
+    setStatus("start a seam first", true);
+    return;
+  }
+  const { path } = await api("/api/path_to_boundary", { start: last });
+  if (path.length < 2) {
+    setStatus("seam already ends on the mesh boundary");
+    return;
+  }
+  state.currentLegs.push(path.slice(1));
+  invalidateSplit();
+  redrawOverlay();
+  updateButtons();
+  setStatus(`seam extended ${path.length - 1} vertices to the boundary`);
 }
 
 async function dartClick(v) {
@@ -355,15 +390,34 @@ function measureClick(v) {
 
 function updateMeasureReadout() {
   const el = document.getElementById("measure-out");
+  const rescale = document.getElementById("measure-rescale");
   if (state.measureLine) {
     const [a, b] = state.measureLine;
     const d = vertexPos(a).distanceTo(vertexPos(b));
     el.textContent = `ruler: ${d.toFixed(1)} mm (straight line)`;
+    rescale.classList.remove("hidden");
   } else if (state.measureA !== null) {
     el.textContent = "ruler: click the second point…";
+    rescale.classList.add("hidden");
   } else {
     el.textContent = "";
+    rescale.classList.add("hidden");
   }
+}
+
+async function rescaleToMeasurement() {
+  // Scale the whole mesh so the measured span becomes the typed length -
+  // the practical way to fix units when you know one real dimension.
+  if (!state.measureLine) return;
+  const target = Number(document.getElementById("measure-target").value);
+  if (!(target > 0)) {
+    setStatus("enter the real-world length in mm first", true);
+    return;
+  }
+  const [a, b] = state.measureLine;
+  const current = vertexPos(a).distanceTo(vertexPos(b));
+  await applyScale(target / current);
+  setStatus(`rescaled so that span is ${target} mm`);
 }
 
 async function applyScale(factor) {
@@ -679,6 +733,7 @@ const HINTS = {
   measure: "click two vertices to measure between them",
   dart: "click the dart mouth (on a boundary or seam), then the apex",
   mark: "attachment: one click; bar tack: click anchor, then direction",
+  addv: "click the mesh to insert a vertex on the nearest edge",
 };
 
 function setMode(mode) {
@@ -728,6 +783,7 @@ function renderPanelList() {
 function updateButtons() {
   document.getElementById("finish-seam").disabled = currentSeamPath().length < 2;
   document.getElementById("undo-leg").disabled = state.currentLegs.length === 0;
+  document.getElementById("to-edge").disabled = state.currentLegs.length === 0;
 }
 
 function setStatus(text, isError = false) {
@@ -736,8 +792,12 @@ function setStatus(text, isError = false) {
   el.style.color = isError ? "#ff8a80" : "";
 }
 
-for (const mode of ["orbit", "seam", "notch", "grain", "measure", "dart", "mark"])
+for (const mode of ["orbit", "seam", "notch", "grain", "measure", "dart", "mark", "addv"])
   document.getElementById(`mode-${mode}`).onclick = () => setMode(mode);
+document.getElementById("to-edge").onclick = () =>
+  extendSeamToEdge().catch(e => setStatus(e.message, true));
+document.getElementById("measure-apply").onclick = () =>
+  rescaleToMeasurement().catch(e => setStatus(e.message, true));
 document.getElementById("show-edges").onchange = e => {
   if (wireframe) wireframe.visible = e.target.checked;
 };
@@ -777,6 +837,7 @@ window.flatpack = {
   state, addSeamVertex, finishSeam, previewSplit, generate, saveSpec,
   selectPanel, toggleNotch, setMode, buildSpec, clearGrain, resetMesh,
   measureClick, applyScale, dartClick, markClick,
+  addVertexClick, extendSeamToEdge, rescaleToMeasurement,
   setStraightCut: on => { document.getElementById("straight-cut").checked = on; },
   cameraState: () => ({
     position: camera.position.toArray(),

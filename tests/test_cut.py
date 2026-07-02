@@ -112,3 +112,43 @@ def test_degenerate_requests_are_rejected():
     mesh = make_plane(half_width=50.0, n=N)
     with pytest.raises(ValueError, match="two different"):
         cut_between(mesh, 3, 3)
+
+
+def test_insert_vertex_mid_edge():
+    from flatpack.cut import insert_vertex_on_edge
+
+    mesh = make_plane(half_width=50.0, n=N)
+    # Aim at the middle of the edge between vertex 0 and vertex 1.
+    target = (mesh.vertices[0] + mesh.vertices[1]) / 2
+    face = next(
+        i for i, f in enumerate(mesh.faces) if 0 in f and 1 in f
+    )
+    out, vertex = insert_vertex_on_edge(mesh, face, target)
+
+    assert vertex == len(mesh.vertices)  # appended
+    assert np.allclose(out.vertices[vertex], target)
+    assert np.allclose(out.vertices[: len(mesh.vertices)], mesh.vertices)
+    assert out.area == pytest.approx(mesh.area, rel=1e-12)
+    # Both faces sharing the edge were split: net +2 faces (or +1 on a
+    # boundary edge; 0-1 is a boundary edge here).
+    assert len(out.faces) in (len(mesh.faces) + 1, len(mesh.faces) + 2)
+    # No T-junctions.
+    edges = np.sort(
+        np.concatenate([out.faces[:, [0, 1]], out.faces[:, [1, 2]], out.faces[:, [2, 0]]]),
+        axis=1,
+    )
+    _, counts = np.unique(edges, axis=0, return_counts=True)
+    assert counts.max() <= 2
+    # The new vertex is usable in a seam path right away.
+    assert is_edge_path(out.faces, [0, vertex, 1])
+
+
+def test_insert_vertex_snaps_to_existing():
+    from flatpack.cut import insert_vertex_on_edge
+
+    mesh = make_plane(half_width=50.0, n=N)
+    near_zero = mesh.vertices[0] + 0.02 * (mesh.vertices[1] - mesh.vertices[0])
+    face = next(i for i, f in enumerate(mesh.faces) if 0 in f and 1 in f)
+    out, vertex = insert_vertex_on_edge(mesh, face, near_zero)
+    assert vertex == 0
+    assert out is mesh  # unchanged

@@ -11,6 +11,12 @@ to a small JSON API:
                                   vertices (inserts vertices, retriangulates);
                                   {"start": int, "end": int} -> {"path": [...],
                                   "mesh": {...}} with the updated mesh
+    POST /api/add_vertex          insert a vertex on the edge nearest the
+                                  clicked point; {"face": int, "point": [x,y,z]}
+                                  -> {"vertex": int, "mesh": {...}}
+    POST /api/path_to_boundary    shortest edge path from a vertex to the
+                                  nearest mesh boundary; {"start": int} ->
+                                  {"path": [...]}
     POST /api/scale               scale the whole mesh (fix unit problems)
                                   {"factor": float} -> {"mesh": {...}}
     POST /api/reset               restore the mesh as originally loaded
@@ -45,8 +51,8 @@ import scipy.sparse.csgraph
 import trimesh
 import yaml
 
-from flatpack.cut import cut_between
-from flatpack.meshutil import unique_edges
+from flatpack.cut import cut_between, insert_vertex_on_edge
+from flatpack.meshutil import boundary_loops, unique_edges
 from flatpack.pipeline import process
 from flatpack.seams import face_labels, spec_from_dict
 
@@ -161,6 +167,46 @@ class GuiState:
         self._edge_graph = None
         return {"mesh": self.mesh_payload()}
 
+    def add_vertex(self, face: int, point: list[float]) -> dict:
+        """Insert a vertex where the user clicked (snapped to the nearest
+        edge), for seams that need to end where no vertex exists."""
+        if len(point) != 3:
+            raise ValueError("point must be [x, y, z]")
+        if self._original is None:
+            self._original = self.mesh.copy()
+        mesh, vertex = insert_vertex_on_edge(self.mesh, face, np.asarray(point))
+        if mesh is not self.mesh:
+            self.mesh = mesh
+            self.modified = True
+            self._edge_graph = None
+        return {"vertex": int(vertex), "mesh": self.mesh_payload()}
+
+    def path_to_boundary(self, start: int) -> list[int]:
+        """Shortest edge path from a vertex to the nearest boundary vertex."""
+        n = self.edge_graph.shape[0]
+        if not 0 <= start < n:
+            raise ValueError(f"vertex index out of range (mesh has {n} vertices)")
+        loops = boundary_loops(np.asarray(self.mesh.faces, dtype=np.int64))
+        if not loops:
+            raise ValueError("mesh has no boundary (it is a closed surface)")
+        border = {int(v) for loop in loops for v in loop}
+        if start in border:
+            return [start]
+        distances, predecessors = scipy.sparse.csgraph.dijkstra(
+            self.edge_graph,
+            directed=False,
+            indices=start,
+            return_predecessors=True,
+        )
+        reachable = [v for v in border if np.isfinite(distances[v])]
+        if not reachable:
+            raise ValueError("no boundary vertex is reachable from here")
+        end = min(reachable, key=lambda v: distances[v])
+        path = [end]
+        while path[-1] != start:
+            path.append(int(predecessors[path[-1]]))
+        return path[::-1]
+
     def split_preview(self, seams: list[list[int]]) -> dict:
         n_components, labels = face_labels(self.mesh, seams)
         return {"n_panels": int(n_components), "labels": labels.tolist()}
@@ -227,6 +273,12 @@ class GuiRequestHandler(SimpleHTTPRequestHandler):
                 payload = self.state.cut(int(body["start"]), int(body["end"]))
             elif self.path == "/api/scale":
                 payload = self.state.scale(float(body["factor"]))
+            elif self.path == "/api/add_vertex":
+                payload = self.state.add_vertex(
+                    int(body["face"]), list(body["point"])
+                )
+            elif self.path == "/api/path_to_boundary":
+                payload = {"path": self.state.path_to_boundary(int(body["start"]))}
             elif self.path == "/api/reset":
                 payload = self.state.reset()
             elif self.path == "/api/split":

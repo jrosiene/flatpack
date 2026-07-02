@@ -174,6 +174,36 @@ def test_scale_rejects_nonsense(fresh_server):
     assert err.value.code == 400
 
 
+def test_add_vertex_and_use_in_seam(fresh_server):
+    base, state = fresh_server
+    mesh = state.mesh
+    target = ((mesh.vertices[0] + mesh.vertices[1]) / 2).tolist()
+    face = next(i for i, f in enumerate(mesh.faces) if 0 in f and 1 in f)
+
+    data = call(base, "/api/add_vertex", {"face": int(face), "point": target})
+    vertex = data["vertex"]
+    assert vertex == N * N  # appended after the original grid
+    assert len(data["mesh"]["vertices"]) // 3 == N * N + 1
+
+    # The new vertex works as a path endpoint immediately.
+    path = call(base, "/api/path", {"start": vertex, "end": N * N - 1})["path"]
+    assert path[0] == vertex
+
+
+def test_path_to_boundary(fresh_server):
+    base, _ = fresh_server
+    center = (N // 2) * N + N // 2  # interior vertex of the patch
+    path = call(base, "/api/path_to_boundary", {"start": center})["path"]
+    assert path[0] == center
+    assert len(path) == N // 2 + 1  # straight run to the nearest edge
+    # Endpoint really is on the boundary (row or column 0 / N-1).
+    i, j = divmod(path[-1], N)
+    assert i in (0, N - 1) or j in (0, N - 1)
+
+    # Starting on the boundary is a no-op path.
+    assert call(base, "/api/path_to_boundary", {"start": 0})["path"] == [0]
+
+
 def test_reset_restores_original_mesh(fresh_server):
     base, state = fresh_server
     call(base, "/api/cut", {"start": N - 1, "end": (N - 1) * N})

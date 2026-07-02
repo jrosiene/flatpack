@@ -37,6 +37,59 @@ class PlaneCutResult:
     path: list[int]  # vertex chain along the cut (indices into .mesh)
 
 
+def insert_vertex_on_edge(
+    mesh: trimesh.Trimesh, face_index: int, point: np.ndarray, snap: float = 0.1
+) -> tuple[trimesh.Trimesh, int]:
+    """Insert a vertex on the mesh edge nearest to `point` on the given face.
+
+    For when there is simply no vertex where a seam needs to start or end.
+    The point is projected onto the closest of the face's three edges;
+    both faces sharing that edge are split so the new vertex is a proper
+    mesh vertex usable in seam paths. If the projection lands within
+    `snap` (fraction of edge length) of an existing vertex, that vertex is
+    returned instead and the mesh is unchanged.
+
+    Returns (mesh, vertex_index); existing vertex indices are preserved.
+    """
+    vertices = np.asarray(mesh.vertices, dtype=float)
+    faces = np.asarray(mesh.faces, dtype=np.int64)
+    if not 0 <= face_index < len(faces):
+        raise ValueError(f"face index {face_index} out of range")
+    point = np.asarray(point, dtype=float)
+
+    v0, v1, v2 = (int(v) for v in faces[face_index])
+    best = None
+    for a, b in ((v0, v1), (v1, v2), (v2, v0)):
+        edge = vertices[b] - vertices[a]
+        t = float(np.clip((point - vertices[a]) @ edge / (edge @ edge), 0.0, 1.0))
+        distance = float(np.linalg.norm(vertices[a] + t * edge - point))
+        if best is None or distance < best[0]:
+            best = (distance, a, b, t)
+    _, a, b, t = best
+
+    if t < snap:
+        return mesh, a
+    if t > 1.0 - snap:
+        return mesh, b
+
+    new_index = len(vertices)
+    new_position = vertices[a] + t * (vertices[b] - vertices[a])
+    all_vertices = np.vstack([vertices, [new_position]])
+
+    split = {(min(a, b), max(a, b)): new_index}
+    face_list: list = []
+    for face in faces:
+        if _face_split_points(face, split):
+            face_list.extend(_split_face(face, split, all_vertices))
+        else:
+            face_list.append(tuple(int(v) for v in face))
+
+    return (
+        trimesh.Trimesh(vertices=all_vertices, faces=np.array(face_list), process=False),
+        new_index,
+    )
+
+
 def cut_between(
     mesh: trimesh.Trimesh, start: int, end: int, snap: float = 0.05
 ) -> PlaneCutResult:
