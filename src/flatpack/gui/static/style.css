@@ -24,6 +24,10 @@ button.mode.active { background: #3f6ea5; border-color: #5b8ec9; }
 .row { display: flex; gap: 6px; margin-top: 6px; }
 
 label { display: block; margin: 6px 0; }
+label.check { font-size: 12px; color: #c8ccd2; }
+label.check input { width: auto; margin-right: 4px; vertical-align: middle; }
+#reset-mesh { margin: 4px 0 8px; font-size: 12px; }
+.row { align-items: center; }
 input, select {
   width: 100%; margin-top: 2px; padding: 4px 6px;
   background: #16181b; color: #e8e8e8; border: 1px solid #4a4f57; border-radius: 4px;

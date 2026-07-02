@@ -90,11 +90,20 @@ synthetic demo patch.
   snaps to the shortest path along the surface (server-side Dijkstra), so
   a seam across the whole shell takes a handful of clicks. *Finish seam*
   commits it; *Undo leg* steps back one click.
+- **Straight cut** (checkbox in the Seams section): instead of following
+  existing mesh edges, the seam cuts straight across triangles — for
+  diagonal seams the triangulation doesn't line up with. The mesh is
+  re-triangulated on the fly (new vertices on the crossed edges; crossings
+  near an existing vertex snap to it to avoid slivers), and *Reset cuts*
+  restores the original geometry. When you save, the cut mesh is exported
+  as `shell_cut.obj` next to `seams.yaml` so the session replays from the
+  CLI.
 - **Preview split** colours the mesh by the panels your seams produce.
   Click a panel to name it and pick its fabric and stretch axis.
 - **Notch** mode toggles match notches on seam vertices (they end up on
   both panels that share the seam, which is what you want for alignment).
-- **Grainline** mode: select a panel, click two vertices.
+- **Grainline** mode: select a panel, click two vertices. *Clear
+  grainline* in the panel properties removes it again.
 - **Generate pattern** runs the exact same pipeline as the CLI into the
   output directory, pops up the SVG preview, and lists per-panel
   distortion/fabric-fit numbers with download links. **Save seams.yaml**
@@ -186,6 +195,7 @@ src/flatpack/
   distortion.py  per-triangle singular-value metrics
   fabric.py      fabric model, fit check, anisotropic relaxation
   seams.py       seam YAML + mesh splitting into panels
+  cut.py         plane cutting across faces (diagonal seams)
   export.py      panel layout, seam allowance, notches, grainline; SVG/DXF
   tiling.py      letter/A4 page tiling with overlap + registration marks
   pipeline.py    end-to-end orchestration

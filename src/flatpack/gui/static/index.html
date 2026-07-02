@@ -15,6 +15,7 @@
 <aside id="sidebar">
   <h1>flatpack</h1>
   <div id="mesh-info" class="muted">loading mesh…</div>
+  <button id="reset-mesh" class="hidden" title="Undo all straight cuts and restore the original mesh">Reset cuts</button>
 
   <section>
     <h2>Mode</h2>
@@ -29,6 +30,9 @@
 
   <section>
     <h2>Seams</h2>
+    <label class="check" title="Cut straight across triangles between clicks (new vertices are inserted) instead of following existing mesh edges">
+      <input type="checkbox" id="straight-cut"> straight cut (diagonal, across faces)
+    </label>
     <ul id="seam-list"></ul>
     <div class="row">
       <button id="finish-seam" disabled>Finish seam</button>
@@ -49,7 +53,10 @@
         </select>
       </label>
       <label>Stretch axis (° from grain) <input id="panel-axis" type="number" value="0" step="5"></label>
-      <div class="muted" id="panel-extra"></div>
+      <div class="row">
+        <span class="muted" id="panel-extra"></span>
+        <button id="clear-grain" disabled>Clear grainline</button>
+      </div>
     </div>
   </section>
 

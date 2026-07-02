@@ -99,8 +99,16 @@ async function api(path, body) {
   return data;
 }
 
+let wireframe = null;
+
 async function loadMesh() {
-  const data = await api("/api/mesh");
+  applyMeshData(await api("/api/mesh"), { fitCamera: true });
+  resize();
+}
+
+// (Re)build the scene from a mesh payload. Used at startup and again
+// whenever a straight cut changes the geometry on the server.
+function applyMeshData(data, { fitCamera = false } = {}) {
   state.meshName = data.name;
   state.positions = new Float64Array(data.vertices);
   state.faces = new Int32Array(data.faces);
@@ -129,28 +137,34 @@ async function loadMesh() {
   geo.setAttribute("color", new THREE.BufferAttribute(col, 3));
   geo.computeVertexNormals();
 
+  if (displayMesh) {
+    scene.remove(displayMesh, wireframe);
+    displayMesh.geometry.dispose();
+    wireframe.geometry.dispose();
+  }
   displayMesh = new THREE.Mesh(
     geo,
     new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide })
   );
-  scene.add(displayMesh);
-  scene.add(new THREE.LineSegments(
+  wireframe = new THREE.LineSegments(
     new THREE.WireframeGeometry(geo),
     new THREE.LineBasicMaterial({ color: 0x50545a, transparent: true, opacity: 0.15 })
-  ));
+  );
+  scene.add(displayMesh, wireframe);
 
   geo.computeBoundingSphere();
   const bs = geo.boundingSphere;
   state.diag = bs.radius * 2;
-  camera.position.copy(bs.center).add(new THREE.Vector3(0, -bs.radius * 1.2, bs.radius * 1.8));
-  camera.near = bs.radius / 100;
-  camera.far = bs.radius * 100;
-  camera.updateProjectionMatrix();
-  controls.target.copy(bs.center);
+  if (fitCamera) {
+    camera.position.copy(bs.center).add(new THREE.Vector3(0, -bs.radius * 1.2, bs.radius * 1.8));
+    camera.near = bs.radius / 100;
+    camera.far = bs.radius * 100;
+    camera.updateProjectionMatrix();
+    controls.target.copy(bs.center);
+  }
 
   document.getElementById("mesh-info").textContent =
     `${data.name}: ${state.positions.length / 3} vertices, ${t} faces`;
-  resize();
 }
 
 function vertexPos(v) {
@@ -220,8 +234,18 @@ async function addSeamVertex(v) {
     state.currentLegs.push([v]);
   } else {
     if (v === last) return;
-    const { path } = await api("/api/path", { start: last, end: v });
-    state.currentLegs.push(path.slice(1));
+    if (document.getElementById("straight-cut").checked) {
+      // Cut straight across faces: the server inserts new vertices and
+      // retriangulates, so reload the geometry it sends back. Existing
+      // vertex indices (seams, notches, grainlines) stay valid.
+      const data = await api("/api/cut", { start: last, end: v });
+      applyMeshData(data.mesh);
+      document.getElementById("reset-mesh").classList.remove("hidden");
+      state.currentLegs.push(data.path.slice(1));
+    } else {
+      const { path } = await api("/api/path", { start: last, end: v });
+      state.currentLegs.push(path.slice(1));
+    }
   }
   invalidateSplit();
   redrawOverlay();
@@ -332,6 +356,36 @@ function selectPanel(label) {
   document.getElementById("panel-axis").value = p.stretch_axis_deg;
   document.getElementById("panel-extra").textContent =
     p.grain ? `grain: ${p.grain[0]} → ${p.grain[1]}` : "no grainline (use Grainline mode)";
+  document.getElementById("clear-grain").disabled = !p.grain;
+}
+
+function clearGrain() {
+  if (state.selectedPanel === null) return;
+  props(state.selectedPanel).grain = null;
+  state.grainPending = null;
+  selectPanel(state.selectedPanel); // refresh the props display
+  redrawOverlay();
+  setStatus("grainline removed");
+}
+
+async function resetMesh() {
+  if (!window.confirm(
+    "Undo all straight cuts and restore the original mesh?\n" +
+    "Seams, notches and grainlines will be cleared too, because they may " +
+    "reference vertices created by the cuts.")) return;
+  const data = await api("/api/reset", {});
+  state.seams = [];
+  state.currentLegs = [];
+  state.notches.clear();
+  state.panelProps.clear();
+  state.grainPending = null;
+  applyMeshData(data.mesh);
+  invalidateSplit();
+  renderSeamList();
+  redrawOverlay();
+  updateButtons();
+  document.getElementById("reset-mesh").classList.add("hidden");
+  setStatus("mesh restored");
 }
 
 // ---------------------------------------------------------------------------
@@ -495,6 +549,8 @@ document.getElementById("generate").onclick = () => generate().catch(e => setSta
 document.getElementById("save-spec").onclick = () => saveSpec().catch(e => setStatus(e.message, true));
 document.getElementById("close-preview").onclick = () =>
   document.getElementById("svg-preview").classList.add("hidden");
+document.getElementById("clear-grain").onclick = clearGrain;
+document.getElementById("reset-mesh").onclick = () => resetMesh().catch(e => setStatus(e.message, true));
 document.getElementById("panel-name").oninput = e => {
   if (state.selectedPanel !== null) { props(state.selectedPanel).name = e.target.value; renderPanelList(); }
 };
@@ -511,6 +567,7 @@ loadMesh().catch(e => setStatus(e.message, true));
 // Scripting/testing hook: everything the mouse can do, callable from code.
 window.flatpack = {
   state, addSeamVertex, finishSeam, previewSplit, generate, saveSpec,
-  selectPanel, toggleNotch, setMode, buildSpec,
+  selectPanel, toggleNotch, setMode, buildSpec, clearGrain, resetMesh,
+  setStraightCut: on => { document.getElementById("straight-cut").checked = on; },
   ready: () => !!displayMesh,
 };

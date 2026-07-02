@@ -7,11 +7,17 @@ to a small JSON API:
     GET  /api/mesh                vertices + faces of the loaded mesh
     POST /api/path                shortest edge path between two vertices
                                   {"start": int, "end": int} -> {"path": [...]}
+    POST /api/cut                 straight cut across faces between two
+                                  vertices (inserts vertices, retriangulates);
+                                  {"start": int, "end": int} -> {"path": [...],
+                                  "mesh": {...}} with the updated mesh
+    POST /api/reset               restore the mesh as originally loaded
     POST /api/split               preview panel components for seam paths
                                   {"seams": [[...], ...]} -> {"labels": [...], ...}
     POST /api/generate            run the full pipeline, return the report
                                   {spec dict} -> {"report": ..., "files": [...]}
-    POST /api/save                write seams.yaml next to the output
+    POST /api/save                write seams.yaml next to the output (plus
+                                  the cut mesh as shell_cut.obj if it was cut)
     GET  /files/<name>            download generated pattern files
 
 Everything mesh-related is done server-side with the same code paths as
@@ -37,6 +43,7 @@ import scipy.sparse.csgraph
 import trimesh
 import yaml
 
+from flatpack.cut import cut_between
 from flatpack.meshutil import unique_edges
 from flatpack.pipeline import process
 from flatpack.seams import face_labels, spec_from_dict
@@ -51,6 +58,8 @@ class GuiState:
     mesh: trimesh.Trimesh
     outdir: Path
     mesh_name: str = "mesh"
+    modified: bool = False  # True once a cut changed the geometry
+    _original: trimesh.Trimesh | None = field(default=None, repr=False)
     _edge_graph: scipy.sparse.csr_matrix | None = field(default=None, repr=False)
 
     @classmethod
@@ -107,6 +116,29 @@ class GuiState:
             path.append(int(predecessors[path[-1]]))
         return path[::-1]
 
+    def cut(self, start: int, end: int) -> dict:
+        """Cut straight across faces between two vertices (diagonal seam).
+
+        Mutates the mesh: new vertices are appended (existing indices stay
+        valid) and crossed faces are retriangulated. Returns the cut path
+        plus the updated mesh for the client to reload.
+        """
+        if self._original is None:
+            self._original = self.mesh.copy()
+        result = cut_between(self.mesh, start, end)
+        self.mesh = result.mesh
+        self.modified = True
+        self._edge_graph = None
+        return {"path": result.path, "mesh": self.mesh_payload()}
+
+    def reset(self) -> dict:
+        """Undo all cuts: restore the mesh as loaded."""
+        if self._original is not None:
+            self.mesh = self._original.copy()
+        self.modified = False
+        self._edge_graph = None
+        return {"mesh": self.mesh_payload()}
+
     def split_preview(self, seams: list[list[int]]) -> dict:
         n_components, labels = face_labels(self.mesh, seams)
         return {"n_panels": int(n_components), "labels": labels.tolist()}
@@ -125,12 +157,19 @@ class GuiState:
             "panels": [r.panel.name for r in results],
         }
 
-    def save_spec(self, spec_data: dict) -> str:
+    def save_spec(self, spec_data: dict) -> dict:
         spec_from_dict(spec_data)  # validate before writing
         self.outdir.mkdir(parents=True, exist_ok=True)
         path = self.outdir / "seams.yaml"
         path.write_text(yaml.safe_dump(spec_data, sort_keys=False))
-        return str(path)
+        saved = {"saved": str(path)}
+        if self.modified:
+            # Cuts changed the geometry, so the seam file only makes sense
+            # against the cut mesh: save it alongside for CLI replay.
+            mesh_path = self.outdir / "shell_cut.obj"
+            self.mesh.export(str(mesh_path))
+            saved["mesh"] = str(mesh_path)
+        return saved
 
 
 class GuiRequestHandler(SimpleHTTPRequestHandler):
@@ -162,12 +201,16 @@ class GuiRequestHandler(SimpleHTTPRequestHandler):
                         int(body["start"]), int(body["end"])
                     )
                 }
+            elif self.path == "/api/cut":
+                payload = self.state.cut(int(body["start"]), int(body["end"]))
+            elif self.path == "/api/reset":
+                payload = self.state.reset()
             elif self.path == "/api/split":
                 payload = self.state.split_preview(body.get("seams", []))
             elif self.path == "/api/generate":
                 payload = self.state.generate(body)
             elif self.path == "/api/save":
-                payload = {"saved": self.state.save_spec(body)}
+                payload = self.state.save_spec(body)
             else:
                 self.send_error(404, "unknown API endpoint")
                 return

@@ -107,6 +107,63 @@ def test_generate_end_to_end(server):
     assert err.value.code == 404
 
 
+@pytest.fixture
+def fresh_server(tmp_path):
+    """Function-scoped server for tests that mutate the mesh (cuts)."""
+    state = GuiState(
+        mesh=make_sphere_patch(radius=150.0, half_width=80.0, n=N),
+        outdir=tmp_path,
+        mesh_name="test",
+    )
+    srv = make_server(state, port=0)
+    thread = threading.Thread(target=srv.serve_forever, daemon=True)
+    thread.start()
+    yield f"http://127.0.0.1:{srv.server_address[1]}", state
+    srv.shutdown()
+
+
+def test_cut_returns_path_and_updated_mesh(fresh_server):
+    base, state = fresh_server
+    start, end = N - 1, (N - 1) * N  # anti-diagonal: crosses faces
+    data = call(base, "/api/cut", {"start": start, "end": end})
+    assert data["path"][0] == start and data["path"][-1] == end
+    n_new = len(data["mesh"]["vertices"]) // 3
+    assert n_new > N * N, "cut should insert vertices"
+    assert state.modified
+
+    # The cut path is now a valid seam: splitting along it gives 2 panels.
+    split = call(base, "/api/split", {"seams": [data["path"]]})
+    assert split["n_panels"] == 2
+
+
+def test_cut_then_generate_end_to_end(fresh_server):
+    base, _ = fresh_server
+    data = call(base, "/api/cut", {"start": N - 1, "end": (N - 1) * N})
+    spec = {
+        "units": "mm",
+        "seam_allowance": 10,
+        "seams": [{"name": "diag", "path": data["path"]}],
+        "panels": [],
+    }
+    out = call(base, "/api/generate", spec)
+    assert len(out["panels"]) == 2
+
+    # Saving also exports the cut mesh, since seams.yaml refers to it.
+    saved = call(base, "/api/save", spec)
+    assert saved["mesh"].endswith("shell_cut.obj")
+
+
+def test_reset_restores_original_mesh(fresh_server):
+    base, state = fresh_server
+    call(base, "/api/cut", {"start": N - 1, "end": (N - 1) * N})
+    data = call(base, "/api/reset", {})
+    assert len(data["mesh"]["vertices"]) // 3 == N * N
+    assert not state.modified
+    # Edge paths work again on the restored mesh.
+    path = call(base, "/api/path", {"start": 0, "end": N - 1})["path"]
+    assert path[0] == 0 and path[-1] == N - 1
+
+
 def test_save_spec_round_trips(server, tmp_path):
     spec = {
         "units": "mm",
