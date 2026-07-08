@@ -167,6 +167,14 @@ synthetic demo patch.
   are the true seam length along the boundary, so gently curved edges
   read as tape-measure values; edges under 25 mm are skipped. Also
   available from seam files via `edge_labels: cm|in`.
+- **Seam alignment marks** (on by default, Output section): registration
+  ticks are placed automatically along every seam that gets sewn to
+  another panel. Corresponding ticks on the two mating panels land at the
+  same fraction along the shared seam, so sewing tick-to-tick keeps the
+  panels aligned and eases in any curve evenly (the way commercial
+  patterns use notches). Works for a tube seam too (both sides on one
+  panel). Toggle off in the GUI or via `seam_markers: false`; they print
+  on the panels and land on the DXF `SEAMTICK` layer.
 - **Generate pattern** runs the exact same pipeline as the CLI into the
   output directory, pops up the SVG preview, and lists per-panel
   distortion/fabric-fit numbers with download links — including

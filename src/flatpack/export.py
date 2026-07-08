@@ -72,12 +72,19 @@ class PanelLayout:
     darts: list[tuple[np.ndarray, np.ndarray]]  # per dart: two legs, apex first
     marks: list[Mark2D]
     edge_labels: list[EdgeLabel]
+    # Registration ticks along seams, matched between mating panels.
+    seam_ticks: list[tuple[np.ndarray, np.ndarray]]  # (point on stitch, outward)
+
+
+SEAM_MARKER_INTERVAL = 75.0  # target spacing of seam alignment ticks, mm
+MIN_SEAM_FOR_MARK = 40.0  # shorter seams get no interior tick
 
 
 def layout_panel(
     panel: Panel,
     uv: np.ndarray,
     seam_allowance: float = 10.0,
+    seam_marker_interval: float = SEAM_MARKER_INTERVAL,
 ) -> PanelLayout:
     """Build printable geometry for one flattened panel.
 
@@ -109,6 +116,7 @@ def layout_panel(
     polygon = Polygon(stitch)
 
     notches = _notches(panel, stitch, loop)
+    seam_ticks = _seam_ticks(panel, stitch, loop, seam_marker_interval)
 
     centroid = np.asarray(polygon.centroid.coords[0])
     height = float(np.ptp(stitch[:, 1]))
@@ -131,6 +139,7 @@ def layout_panel(
         darts=_dart_layouts(panel, uv_t),
         marks=_mark_layouts(panel, uv_t),
         edge_labels=_edge_labels(stitch, polygon),
+        seam_ticks=seam_ticks,
     )
 
 
@@ -319,6 +328,92 @@ def _notches(
     return notches
 
 
+def _seam_ticks(
+    panel: Panel,
+    stitch: np.ndarray,
+    loop: np.ndarray,
+    interval: float,
+) -> list[tuple[np.ndarray, np.ndarray]]:
+    """Registration ticks along the panel's true seam edges.
+
+    Ticks are placed at matching positions on the two panels that share a
+    seam: each seam run is oriented from the end with the smaller *original*
+    vertex index (so both panels agree on direction), its tick count comes
+    from the run's 3D length (identical on both sides), and ticks sit at the
+    same fractions along it — so tick k on one panel lines up with tick k on
+    the other when the seam is sewn. Also works for a single panel whose two
+    sides of an opened seam meet (e.g. a tube seam).
+    """
+    if not panel.seam_edges:
+        return []
+    if not _loop_is_ccw(stitch):
+        stitch = stitch[::-1]
+        loop = loop[::-1]
+
+    n = len(loop)
+    is_seam = np.zeros(n, dtype=bool)  # is_seam[i]: edge (loop[i], loop[i+1])
+    for i in range(n):
+        a, b = int(loop[i]), int(loop[(i + 1) % n])
+        if (min(a, b), max(a, b)) in panel.seam_edges:
+            is_seam[i] = True
+
+    ticks: list[tuple[np.ndarray, np.ndarray]] = []
+    for run in _cyclic_true_runs(is_seam):
+        # run is a list of edge indices; its vertices are loop[i] for i in
+        # run plus the final loop[run[-1]+1].
+        vpos = [run[0]] + [(e + 1) % n for e in run]
+        verts = [int(loop[i]) for i in vpos]
+        pts2d = np.array([stitch[i] for i in vpos])
+        origs = [int(panel.orig_vertex_index[v]) for v in verts]
+        if origs[0] > origs[-1]:  # canonical: start from smaller original id
+            verts, pts2d = verts[::-1], pts2d[::-1]
+
+        pos3d = panel.vertices[verts]
+        seg3 = np.linalg.norm(np.diff(pos3d, axis=0), axis=1)
+        length3 = float(seg3.sum())
+        if length3 < MIN_SEAM_FOR_MARK:
+            continue
+        count = max(1, round(length3 / interval) - 1)
+
+        seg2 = np.linalg.norm(np.diff(pts2d, axis=0), axis=1)
+        cum2 = np.concatenate([[0.0], np.cumsum(seg2)])
+        total2 = float(cum2[-1])
+        if total2 < 1e-9:
+            continue
+        for k in range(1, count + 1):
+            target = k / (count + 1) * total2
+            j = int(np.searchsorted(cum2, target)) - 1
+            j = min(max(j, 0), len(seg2) - 1)
+            frac = (target - cum2[j]) / max(seg2[j], 1e-12)
+            point = pts2d[j] + frac * (pts2d[j + 1] - pts2d[j])
+            tangent = pts2d[j + 1] - pts2d[j]
+            tangent = tangent / max(np.linalg.norm(tangent), 1e-12)
+            outward = np.array([tangent[1], -tangent[0]])  # right of a CCW loop
+            ticks.append((point, outward))
+    return ticks
+
+
+def _cyclic_true_runs(mask: np.ndarray) -> list[list[int]]:
+    """Maximal runs of consecutive True indices in a cyclic boolean array."""
+    n = len(mask)
+    if mask.all():
+        return [list(range(n))]
+    if not mask.any():
+        return []
+    start = int(np.argmin(mask))  # a False position to break the cycle at
+    runs, current = [], []
+    for step in range(n):
+        i = (start + step) % n
+        if mask[i]:
+            current.append(i)
+        elif current:
+            runs.append(current)
+            current = []
+    if current:
+        runs.append(current)
+    return runs
+
+
 def pack_layouts(layouts: list[PanelLayout], gap: float = 20.0) -> None:
     """Arrange layouts side by side (in place): simple left-to-right shelf."""
     x = 0.0
@@ -332,6 +427,7 @@ def _shift_layout(layout: PanelLayout, shift: np.ndarray) -> None:
     layout.stitch = layout.stitch + shift
     layout.cut = layout.cut + shift
     layout.notches = [(p + shift, d) for p, d in layout.notches]
+    layout.seam_ticks = [(p + shift, d) for p, d in layout.seam_ticks]
     layout.grain_arrow = (layout.grain_arrow[0] + shift, layout.grain_arrow[1] + shift)
     layout.label_pos = layout.label_pos + shift
     layout.darts = [(a + shift, b + shift) for a, b in layout.darts]
@@ -353,18 +449,26 @@ def sheet_bbox(layouts: list[PanelLayout], margin: float = 5.0) -> np.ndarray:
 
 
 def svg_content_group(
-    layouts: list[PanelLayout], flip_height: float, edge_units: str | None = None
+    layouts: list[PanelLayout],
+    flip_height: float,
+    edge_units: str | None = None,
+    seam_markers: bool = True,
 ) -> ET.Element:
     """All panels as one SVG <g>. flip_height maps our y-up mm coordinates
     to SVG's y-down convention. edge_units ('cm' or 'in') turns on edge
-    length labels."""
+    length labels; seam_markers draws the seam alignment ticks."""
     group = ET.Element("g", {"id": "pattern"})
     for layout in layouts:
-        group.append(_panel_group(layout, flip_height, edge_units))
+        group.append(_panel_group(layout, flip_height, edge_units, seam_markers))
     return group
 
 
-def _panel_group(layout: PanelLayout, h: float, edge_units: str | None = None) -> ET.Element:
+def _panel_group(
+    layout: PanelLayout,
+    h: float,
+    edge_units: str | None = None,
+    seam_markers: bool = True,
+) -> ET.Element:
     def pts(a: np.ndarray) -> str:
         return " ".join(f"{x:.3f},{h - y:.3f}" for x, y in a)
 
@@ -405,6 +509,24 @@ def _panel_group(layout: PanelLayout, h: float, edge_units: str | None = None) -
                 "stroke-width": "0.6",
             },
         )
+    if seam_markers:
+        for point, outward in layout.seam_ticks:
+            # A light tick from the stitch line out to the cut edge.
+            a = point - outward * 1.0
+            b = point + outward * layout.seam_allowance
+            ET.SubElement(
+                g,
+                "line",
+                {
+                    "x1": f"{a[0]:.3f}",
+                    "y1": f"{h - a[1]:.3f}",
+                    "x2": f"{b[0]:.3f}",
+                    "y2": f"{h - b[1]:.3f}",
+                    "stroke": "black",
+                    "stroke-width": "0.35",
+                    "class": "seam-tick",
+                },
+            )
     for leg1, leg2 in layout.darts:
         # Dart legs: fold/stitch lines from the mouth to the apex, plus a
         # small circle at the apex so it survives cutting out.
@@ -551,7 +673,10 @@ def _mark_svg(mark: Mark2D, h: float) -> ET.Element:
 
 
 def write_svg(
-    layouts: list[PanelLayout], path: str, edge_units: str | None = None
+    layouts: list[PanelLayout],
+    path: str,
+    edge_units: str | None = None,
+    seam_markers: bool = True,
 ) -> None:
     """One SVG sheet with all panels, in real-world millimetres."""
     bbox = sheet_bbox(layouts)
@@ -567,7 +692,11 @@ def write_svg(
             "viewBox": f"{bbox[0]:.3f} 0 {w:.3f} {h:.3f}",
         },
     )
-    svg.append(svg_content_group(layouts, flip_height=bbox[3], edge_units=edge_units))
+    svg.append(
+        svg_content_group(
+            layouts, flip_height=bbox[3], edge_units=edge_units, seam_markers=seam_markers
+        )
+    )
     ET.ElementTree(svg).write(path, xml_declaration=True, encoding="unicode")
 
 
@@ -577,15 +706,19 @@ def write_svg(
 
 
 def write_dxf(
-    layouts: list[PanelLayout], path: str, edge_units: str | None = None
+    layouts: list[PanelLayout],
+    path: str,
+    edge_units: str | None = None,
+    seam_markers: bool = True,
 ) -> None:
-    """DXF (mm) with layers CUT, STITCH, NOTCH, ANNOT."""
+    """DXF (mm) with layers CUT, STITCH, NOTCH, SEAMTICK, DART, MARK, ANNOT."""
     doc = ezdxf.new(setup=True)
     doc.units = ezdxf.units.MM
     for name, color in (
         ("CUT", 1),
         ("STITCH", 3),
         ("NOTCH", 5),
+        ("SEAMTICK", 2),
         ("DART", 6),
         ("MARK", 4),
         ("ANNOT", 7),
@@ -604,6 +737,11 @@ def write_dxf(
             a = point - outward * 2.0
             b = point + outward * (layout.seam_allowance + 2.0)
             msp.add_line(a, b, dxfattribs={"layer": "NOTCH"})
+        if seam_markers:
+            for point, outward in layout.seam_ticks:
+                a = point - outward * 1.0
+                b = point + outward * layout.seam_allowance
+                msp.add_line(a, b, dxfattribs={"layer": "SEAMTICK"})
         for leg1, leg2 in layout.darts:
             msp.add_lwpolyline(leg1, dxfattribs={"layer": "DART"})
             msp.add_lwpolyline(leg2, dxfattribs={"layer": "DART"})

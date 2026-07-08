@@ -702,6 +702,7 @@ function buildSpec() {
     units: "mm",
     seam_allowance: Number(document.getElementById("allowance").value) || 10,
     edge_labels: document.getElementById("edge-units").value,
+    seam_markers: document.getElementById("seam-markers").checked,
     seams: state.seams.map(s => ({ name: s.name, path: s.legs.flat() })),
     darts: state.darts.map(d => ({ name: d.name, path: d.path })),
     marks: state.marks,
@@ -760,6 +761,7 @@ async function loadSpec(yamlText) {
   }
   document.getElementById("allowance").value = data.seam_allowance;
   document.getElementById("edge-units").value = data.edge_labels;
+  document.getElementById("seam-markers").checked = data.seam_markers !== false;
 
   // Split so labels exist, then apply each panel's saved settings.
   await previewSplit();

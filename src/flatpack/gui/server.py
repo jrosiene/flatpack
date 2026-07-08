@@ -313,6 +313,7 @@ class GuiState:
             "panels": panel_settings,
             "seam_allowance": spec.seam_allowance,
             "edge_labels": spec.edge_labels,
+            "seam_markers": spec.seam_markers,
             "n_panels": len(panels),
             "mesh": self.mesh_payload(),
             "mesh_changed": mesh_changed,

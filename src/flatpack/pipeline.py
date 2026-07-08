@@ -53,9 +53,12 @@ def process(
     layouts = [r.layout for r in results]
     pack_layouts(layouts)
     edge_units = spec.edge_labels if spec.edge_labels in ("cm", "in") else None
-    write_svg(layouts, str(outdir / "pattern.svg"), edge_units=edge_units)
-    write_dxf(layouts, str(outdir / "pattern.dxf"), edge_units=edge_units)
-    page_paths = write_tiled_svgs(layouts, outdir, page=page, edge_units=edge_units)
+    ticks = spec.seam_markers
+    write_svg(layouts, str(outdir / "pattern.svg"), edge_units=edge_units, seam_markers=ticks)
+    write_dxf(layouts, str(outdir / "pattern.dxf"), edge_units=edge_units, seam_markers=ticks)
+    page_paths = write_tiled_svgs(
+        layouts, outdir, page=page, edge_units=edge_units, seam_markers=ticks
+    )
     write_pattern_pdf(page_paths, outdir / "pattern_tiled.pdf", page=page)
 
     report = {

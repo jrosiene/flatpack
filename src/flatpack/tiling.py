@@ -107,13 +107,16 @@ def write_tiled_svgs(
     overlap: float = 15.0,
     prefix: str = "page",
     edge_units: str | None = None,
+    seam_markers: bool = True,
 ) -> list[Path]:
     """Write one SVG per page; returns the paths written."""
     outdir = Path(outdir)
     outdir.mkdir(parents=True, exist_ok=True)
     bbox = sheet_bbox(layouts)
     windows = page_windows(bbox, page, printer_margin, overlap)
-    content = svg_content_group(layouts, flip_height=bbox[3], edge_units=edge_units)
+    content = svg_content_group(
+        layouts, flip_height=bbox[3], edge_units=edge_units, seam_markers=seam_markers
+    )
 
     ET.register_namespace("", SVG_NS)
     paths = []

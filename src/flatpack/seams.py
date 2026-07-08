@@ -38,7 +38,7 @@ import scipy.sparse.csgraph
 import trimesh
 import yaml
 
-from flatpack.meshutil import unique_edges
+from flatpack.meshutil import boundary_edges, unique_edges
 
 
 @dataclass
@@ -85,6 +85,8 @@ class SeamSpec:
     # Print each straight boundary edge's length on the pattern:
     # "none", "cm" or "in".
     edge_labels: str = "none"
+    # Auto registration ticks along seams to help line up mating panels.
+    seam_markers: bool = True
 
 
 @dataclass
@@ -98,6 +100,9 @@ class Panel:
     spec: PanelSpec
     darts: list[list[int]] = field(default_factory=list)  # original indices
     marks: list[Mark] = field(default_factory=list)
+    # Panel-local boundary edges that are true seams (get sewn to another
+    # panel), as sorted (a, b) pairs — used to place alignment ticks.
+    seam_edges: set = field(default_factory=set)
 
     def local_index(self, orig_vertex: int) -> int:
         """Translate an original-mesh vertex index to this panel's indexing."""
@@ -150,6 +155,7 @@ def spec_from_dict(data: dict) -> SeamSpec:
         darts=darts,
         marks=marks,
         edge_labels=edge_labels,
+        seam_markers=bool(data.get("seam_markers", True)),
     )
 
 
@@ -194,6 +200,8 @@ def split_mesh(mesh: trimesh.Trimesh, spec: SeamSpec) -> list[Panel]:
     # separate components (they end inside the surface).
     darts = _normalized_darts(faces, spec)
     seam_edges = _seam_edge_set(faces, spec.seams + darts)
+    # Only real panel-joining seams (not darts) carry alignment ticks.
+    join_edges = _seam_edge_set(faces, spec.seams)
 
     vertices, faces, orig_map = open_seams(mesh, seam_edges)
 
@@ -205,18 +213,30 @@ def split_mesh(mesh: trimesh.Trimesh, spec: SeamSpec) -> list[Panel]:
         vertex_subset = np.unique(face_subset)
         remap = np.full(len(vertices), -1, dtype=np.int64)
         remap[vertex_subset] = np.arange(len(vertex_subset))
+        local_faces = remap[face_subset]
 
         panel_spec = _spec_for_component(spec, labels, component)
         panel_origs = set(orig_map[vertex_subset].tolist())
+        local_orig = orig_map[vertex_subset]
+        panel_seam_edges = {
+            edge
+            for edge in boundary_edges(local_faces)
+            if (
+                min(int(local_orig[edge[0]]), int(local_orig[edge[1]])),
+                max(int(local_orig[edge[0]]), int(local_orig[edge[1]])),
+            )
+            in join_edges
+        }
         panels.append(
             Panel(
                 name=panel_spec.name,
                 vertices=vertices[vertex_subset],
-                faces=remap[face_subset],
-                orig_vertex_index=orig_map[vertex_subset],
+                faces=local_faces,
+                orig_vertex_index=local_orig,
                 spec=panel_spec,
                 darts=[d for d in darts if set(d) <= panel_origs],
                 marks=[m for m in spec.marks if m.vertex in panel_origs],
+                seam_edges=panel_seam_edges,
             )
         )
     panels.sort(key=lambda p: p.name)

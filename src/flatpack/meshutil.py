@@ -65,6 +65,14 @@ def boundary_loops(faces: np.ndarray) -> list[np.ndarray]:
     return loops
 
 
+def boundary_edges(faces: np.ndarray) -> set[tuple[int, int]]:
+    """Undirected boundary edges (used by exactly one face), each sorted."""
+    directed = np.concatenate([faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]]])
+    undirected = np.sort(directed, axis=1)
+    uniq, counts = np.unique(undirected, axis=0, return_counts=True)
+    return {(int(a), int(b)) for a, b in uniq[counts == 1]}
+
+
 def farthest_pair(points: np.ndarray, max_samples: int = 1500) -> tuple[int, int]:
     """Indices of (approximately) the two most distant points.
 
