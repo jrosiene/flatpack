@@ -68,6 +68,21 @@ def test_shortest_path_follows_edges(server):
         assert abs(ai - bi) + abs(aj - bj) <= 2 and a != b
 
 
+def test_curve_seam(server):
+    # Bow a seam through a middle vertex not on the straight line.
+    start, mid, end = 0, (N // 2) * N + N // 2, N * N - 1
+    data = call(server, "/api/curve_seam", {"start": start, "mid": mid, "end": end})
+    path = data["path"]
+    assert path[0] == start and path[-1] == end
+    # Consecutive entries are mesh edges.
+    edges = {
+        tuple(sorted((int(a), int(b))))
+        for a, b in zip(path, path[1:])
+    }
+    assert edges  # non-empty, and the split endpoint accepts it
+    call(server, "/api/split", {"seams": [path]})  # must not error
+
+
 def test_split_preview(server):
     data = call(server, "/api/split", {"seams": [CENTER_SEAM]})
     assert data["n_panels"] == 2

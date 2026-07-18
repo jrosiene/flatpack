@@ -17,6 +17,9 @@ to a small JSON API:
     POST /api/path_to_boundary    shortest edge path from a vertex to the
                                   nearest mesh boundary; {"start": int} ->
                                   {"path": [...]}
+    POST /api/curve_seam          curved seam through three vertices;
+                                  {"start": int, "mid": int, "end": int} ->
+                                  {"path": [...]}
     POST /api/scale               scale the whole mesh (fix unit problems)
                                   {"factor": float} -> {"mesh": {...}}
     POST /api/reset               restore the mesh as originally loaded
@@ -59,6 +62,7 @@ import trimesh
 import yaml
 
 from flatpack.analysis import analyze
+from flatpack.curves import curve_seam_path
 from flatpack.cut import cut_between, insert_vertex_on_edge, replay_edits
 from flatpack.meshutil import boundary_loops, unique_edges
 from flatpack.pipeline import process
@@ -223,6 +227,18 @@ class GuiState:
         while path[-1] != start:
             path.append(int(predecessors[path[-1]]))
         return path[::-1]
+
+    def curve_seam(self, start: int, mid: int, end: int) -> dict:
+        """Curved seam through three vertices (start -> mid -> end)."""
+        path = curve_seam_path(
+            self.mesh.vertices,
+            self.mesh.faces,
+            int(start),
+            int(mid),
+            int(end),
+            edge_graph=self.edge_graph,
+        )
+        return {"path": path}
 
     def split_preview(self, seams: list[list[int]]) -> dict:
         n_components, labels = face_labels(self.mesh, seams)
@@ -395,6 +411,10 @@ class GuiRequestHandler(SimpleHTTPRequestHandler):
                 )
             elif self.path == "/api/path_to_boundary":
                 payload = {"path": self.state.path_to_boundary(int(body["start"]))}
+            elif self.path == "/api/curve_seam":
+                payload = self.state.curve_seam(
+                    int(body["start"]), int(body["mid"]), int(body["end"])
+                )
             elif self.path == "/api/reset":
                 payload = self.state.reset()
             elif self.path == "/api/split":

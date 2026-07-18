@@ -32,6 +32,7 @@ const state = {
   grainPending: null,   // first grain vertex clicked
   measureA: null,       // first ruler vertex clicked
   measureLine: null,    // completed ruler: [a, b]
+  curvePts: [],         // vertices collected for a 3-point curve seam
   darts: [],            // {name, path: [v, ...]} mouth -> apex
   dartPending: null,    // dart mouth awaiting an apex click
   marks: [],            // {vertex, type, label, toward}
@@ -303,6 +304,7 @@ function placeMarkerAt(m, xyz, size) {
 
 async function handleClick({ vertex, face, point }) {
   if (state.mode === "seam") return addSeamVertex(vertex);
+  if (state.mode === "curve") return curveClick(vertex);
   if (state.mode === "notch") return toggleNotch(vertex);
   if (state.mode === "grain") return grainClick(vertex);
   if (state.mode === "measure") return measureClick(vertex);
@@ -322,6 +324,29 @@ async function addVertexClick(face, point) {
   placeMarker(cursor, data.vertex, 0.008);
   cursor.visible = true;
   setStatus(`vertex ${data.vertex} added (snapped to the nearest edge)`);
+}
+
+async function curveClick(v) {
+  // Collect three points, then commit a smooth curved seam through them.
+  if (state.curvePts.length && state.curvePts[state.curvePts.length - 1] === v) return;
+  state.curvePts.push(v);
+  redrawOverlay();
+  if (state.curvePts.length < 3) {
+    setStatus(
+      state.curvePts.length === 1
+        ? "curve seam: click the middle point it bows through"
+        : "curve seam: click the end point"
+    );
+    return;
+  }
+  const [start, mid, end] = state.curvePts;
+  state.curvePts = [];
+  const { path } = await api("/api/curve_seam", { start, mid, end });
+  state.seams.push({ name: `seam_${state.seams.length + 1}`, legs: [path] });
+  invalidateSplit();
+  renderSeamList();
+  redrawOverlay();
+  setStatus(`curved seam added (${path.length} vertices)`);
 }
 
 async function extendSeamToEdge() {
@@ -835,6 +860,11 @@ function redrawOverlay() {
     placeMarker(m, state.markPending, 0.006);
     overlay.add(m);
   }
+  for (const v of state.curvePts) {
+    const m = marker(0xffd54f);
+    placeMarker(m, v, 0.007);
+    overlay.add(m);
+  }
   if (state.measureA !== null) {
     const m = marker(0xffffff);
     placeMarker(m, state.measureA, 0.006);
@@ -866,6 +896,7 @@ function redrawOverlay() {
 const HINTS = {
   orbit: "left-drag also orbits in this mode",
   seam: "click vertices; seam follows the surface between clicks",
+  curve: "click start, middle, end — the seam bows through the middle",
   notch: "click a vertex to toggle a match notch",
   grain: "select a panel, then click two vertices",
   measure: "click two vertices to measure between them",
@@ -885,6 +916,7 @@ function setMode(mode) {
   document.getElementById("mark-opts").classList.toggle("hidden", mode !== "mark");
   state.dartPending = null;
   state.markPending = null;
+  state.curvePts = [];
 }
 
 function renderSeamList() {
@@ -948,7 +980,7 @@ function setStatus(text, isError = false) {
   el.style.color = isError ? "#ff8a80" : "";
 }
 
-for (const mode of ["orbit", "seam", "notch", "grain", "measure", "dart", "mark", "addv"])
+for (const mode of ["orbit", "seam", "curve", "notch", "grain", "measure", "dart", "mark", "addv"])
   document.getElementById(`mode-${mode}`).onclick = () => setMode(mode);
 document.getElementById("to-edge").onclick = () =>
   extendSeamToEdge().catch(e => setStatus(e.message, true));
@@ -1010,6 +1042,7 @@ window.flatpack = {
   selectPanel, toggleNotch, setMode, buildSpec, clearGrain, resetMesh,
   measureClick, applyScale, dartClick, markClick,
   addVertexClick, extendSeamToEdge, rescaleToMeasurement, analyzeWarp, loadSpec,
+  curveClick,
   setStraightCut: on => { document.getElementById("straight-cut").checked = on; },
   cameraState: () => ({
     position: camera.position.toArray(),

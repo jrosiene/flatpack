@@ -108,6 +108,12 @@ synthetic demo patch.
   snaps to the shortest path along the surface (server-side Dijkstra), so
   a seam across the whole shell takes a handful of clicks. *Finish seam*
   commits it; *Undo leg* steps back one click.
+- **Curve seam** mode: click three vertices — start, a middle point, and
+  end — and the seam bows smoothly through the middle one instead of
+  cornering. It's a quadratic Bézier through the three points, projected
+  onto the surface, so it stays on the mesh and works like any other seam
+  (split, warp check, alignment ticks, save/load). Collinear points give
+  a straight seam.
 - **To edge** (in the Seams section): extends the seam you're drawing
   along the surface to the nearest mesh boundary — no hunting for the
   right boundary vertex.
